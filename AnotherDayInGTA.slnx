@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AnotherDay.Service/AnotherDay.Service.csproj" />
+    <Project Path="src/AnotherDay.Shared/AnotherDay.Shared.csproj" />
+    <Project Path="src/AnotherDay.Plugin/AnotherDay.Plugin.csproj" />
+  </Folder>
+</Solution>

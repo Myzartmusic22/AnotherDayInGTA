@@ -1,0 +1,29 @@
+# build output
+bin/
+obj/
+artifacts/
+.vs/
+
+# local caches and tooling downloads
+.tools/
+tools/cache/
+
+# Freebuff desktop metadata
+.freebuff/
+.cloud-attachments/
+
+# installed-file snapshots, DB copies, quarantined game files
+backups/
+
+# secrets and runtime state - never commit
+*.key
+*.token
+ipc.token
+*.db
+*.db-shm
+*.db-wal
+config.json
+gemini.key*
+
+# logs
+*.log
