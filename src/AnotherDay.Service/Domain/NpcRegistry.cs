@@ -146,6 +146,13 @@ namespace AnotherDay.Service.Domain
                         active.Profile.IsMale = ped.IsMale;
                         active.Profile.Voice = await _voices.GetOrAssignAsync(active.Profile, active.Emotion).ConfigureAwait(false);
                     }
+                    if (NpcRolePolicy.ReconcileObservedRole(active.Profile, ped.CategoryHint))
+                    {
+                        Log.Info("Correcting unsupported identity details for " + active.Profile.DisplayName +
+                            " from the live ped role.");
+                        active.Profile.Voice = await _voices.GetOrAssignAsync(active.Profile, active.Emotion).ConfigureAwait(false);
+                        await _db.SaveProfileAsync(active.Profile).ConfigureAwait(false);
+                    }
                     active.Profile.LastKnownPosition = ped.Position ?? active.Profile.LastKnownPosition;
                     active.Profile.IsDormant = false;
                     _byHandle[ped.Handle] = active;

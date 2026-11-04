@@ -65,6 +65,17 @@ namespace AnotherDay.Shared
             get { lock (_sync) return _phase == ConversationPhase.Connecting || _phase == ConversationPhase.Active; }
         }
 
+        /// <summary>Atomically checks whether the given pedestrian currently owns the conversation slot.</summary>
+        public bool OwnsNpc(int npcHandle)
+        {
+            lock (_sync)
+            {
+                return npcHandle > 0 &&
+                       (_phase == ConversationPhase.Connecting || _phase == ConversationPhase.Active) &&
+                       _current != null && _current.NpcHandle == npcHandle;
+            }
+        }
+
         public bool IsConnecting { get { lock (_sync) return _phase == ConversationPhase.Connecting; } }
 
         public string ConversationId { get { lock (_sync) return _current == null ? null : _current.ConversationId; } }
@@ -173,6 +184,16 @@ namespace AnotherDay.Shared
     /// </summary>
     public static class ConversationLifecyclePolicy
     {
+        /// <summary>
+        /// A detected farewell is not complete until the model's turn is done
+        /// and its queued audio has drained. Releasing sooner cuts off the
+        /// character's closing line.
+        /// </summary>
+        public static bool ShouldFinishFarewell(bool farewellPending, bool turnComplete, bool audioPlaying)
+        {
+            return farewellPending && turnComplete && !audioPlaying;
+        }
+
         public static bool ShouldRelease(bool playerAlive, bool npcValid, double distanceMeters,
             double leaveRadiusMeters, out ConversationEndReason reason)
         {
@@ -197,7 +218,7 @@ namespace AnotherDay.Shared
     }
 
     /// <summary>
-    /// Recognises a spoken farewell in a completed player turn.
+    /// Recognises a spoken farewell in a completed conversation turn.
     ///
     /// This is intentionally not exact string matching: the transcript is
     /// normalised, weighted phrases are scored, and a question or a "but"/"wait"
@@ -215,10 +236,13 @@ namespace AnotherDay.Shared
             "i gotta go", "i got to go", "i have to go", "i've got to go",
             "i need to go", "i should go", "i'm going to go", "i am going to go",
             "i'll be going", "i will be going", "time for me to go", "time to go",
-            "take care", "take it easy", "be safe", "stay safe", "you be safe",
+            "take care", "take care of yourself", "take it easy", "be safe", "stay safe",
+            "you be safe", "stay safe out there",
             "have a good one", "have a good day", "have a nice day", "good night", "goodnight",
             "i'm heading out", "i am heading out", "heading out", "i'm out",
-            "i'm leaving", "i am leaving", "i'll leave you", "leave you alone", "leave you be",
+            "i'm leaving", "i am leaving", "i'm gonna head out", "i am going to head out",
+            "i gotta run", "i have to run", "i need to get going", "i'll leave you",
+            "leave you alone", "leave you be",
             "nice talking to you", "good talking to you", "enjoy your day"
         };
 

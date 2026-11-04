@@ -48,7 +48,7 @@ per-model overrides from `NPCI_VoiceProfiles.ini`.
 
 | Technique | Reference implementation |
 |-----------|--------------------------|
-| Mouth | `SET_FACIAL_IDLE_ANIM_OVERRIDE(ped, "mic_chatter", "mp_facial")` applied **twice** in a row, only after `REQUEST_ANIM_DICT("mp_facial")` + `HAS_ANIM_DICT_LOADED`, cleared with `CLEAR_FACIAL_IDLE_ANIM_OVERRIDE` |
+| Mouth | `PLAY_FACIAL_ANIM(ped, "mic_chatter", "mp_facial")` while the speaker is active, stopped with `STOP_ANIM_TASK` using a positive exit speed when speech ends |
 | Emphatic facial | `PLAY_FACIAL_ANIM` with `timetable@tracy@ig_5@base` / `base_face`, and male/female `facials@gen_male@base` / `facials@gen_female@base` with `mood_normal_1`; `GET_ANIM_DURATION` drives slices of `max(0.5, duration*0.8)` s, then `STOP_ANIM_TASK(..., -4f)`, `SET_PED_RESET_FLAG(ped, 322, true)`, `CLEAR_PED_SECONDARY_TASK` |
 | Body turn | `TASK_TURN_PED_TO_FACE_ENTITY(ped, player, 2000)` after `TASK_STAND_STILL(ped, ms)`; heading corrections via `GET_HEADING_FROM_VECTOR_2D`, `TASK_ACHIEVE_HEADING`, `SET_PED_DESIRED_HEADING` |
 | Eye contact | `TASK_LOOK_AT_ENTITY(ped, player, -1, 2048, 2)` re-issued every 500–1000 ms in a fiber loop while the conversation is live |
@@ -57,11 +57,10 @@ per-model overrides from `NPCI_VoiceProfiles.ini`.
 
 ## What we adopted (and why)
 
-1. **Stream the facial dictionary and apply the override twice.** Our mouth used
-   the same `mp_facial` / `mic_chatter` pair, but never called
-   `REQUEST_ANIM_DICT` and applied the override once every 400 ms. An override
-   into a dictionary that was never requested does nothing, which matches the
-   "no mouth movement at all" report.
+1. **Gate the speaking clip on live audio.** `PLAY_FACIAL_ANIM` starts the
+   `mp_facial` / `mic_chatter` clip only while a speaker is active, and
+   `STOP_ANIM_TASK` stops it with a positive exit speed. The idle override was
+   tested in-game but produced no visible mouth movement, so it is not used.
 2. **Look task flag 2048.** Our `TASK_LOOK_AT_ENTITY(..., 0, 2)` aims at the
    entity origin; the reference uses 2048 so the head tracks the player's head.
 3. **Two-second turn task.** Re-issuing a turn every hold tick restarts the

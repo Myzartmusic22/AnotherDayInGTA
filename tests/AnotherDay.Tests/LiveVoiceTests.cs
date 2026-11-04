@@ -211,6 +211,91 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
+        public async Task FarewellIsRecognizedWhenTranscriptArrivesInWordFragments()
+        {
+            var transport = new FakeLiveTransport();
+            using var session = new LiveSession(Config(),
+                async (handle, ct) =>
+                {
+                    var client = new GeminiLiveClient(Config(), () => transport, "test-key",
+                        "gemini-3.8-live", "Aoede", "You are a mechanic.", handle);
+                    await client.ConnectAsync(ct);
+                    return client;
+                },
+                "npc_test", "Test NPC", "Aoede", "gemini-3.8-live");
+            var farewell = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            session.Farewell += _ => farewell.TrySetResult(true);
+
+            await session.StartAsync(CancellationToken.None);
+            transport.ServerSays("{\"serverContent\":{\"inputTranscription\":{\"text\":\"You be\"}}}");
+            transport.ServerSays("{\"serverContent\":{\"inputTranscription\":{\"text\":\"safe\"}}}");
+            transport.ServerSays("{\"serverContent\":{\"turnComplete\":true}}");
+
+            Task completed = await Task.WhenAny(farewell.Task, Task.Delay(2000));
+            Assert.Same(farewell.Task, completed);
+            Assert.True(await farewell.Task);
+            await session.StopAsync("test complete");
+        }
+
+        [Fact]
+        public async Task FarewellIsRecognizedWhenTranscriptUpdatesRepeatTheirPrefix()
+        {
+            var transport = new FakeLiveTransport();
+            using var session = new LiveSession(Config(),
+                async (handle, ct) =>
+                {
+                    var client = new GeminiLiveClient(Config(), () => transport, "test-key",
+                        "gemini-3.8-live", "Aoede", "You are a mechanic.", handle);
+                    await client.ConnectAsync(ct);
+                    return client;
+                },
+                "npc_test", "Test NPC", "Aoede", "gemini-3.8-live");
+            var farewell = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            session.Farewell += _ => farewell.TrySetResult(true);
+
+            await session.StartAsync(CancellationToken.None);
+            transport.ServerSays("{\"serverContent\":{\"inputTranscription\":{\"text\":\"Take care\"}}}");
+            transport.ServerSays("{\"serverContent\":{\"inputTranscription\":{\"text\":\"Take care of yourself.\"}}}");
+            transport.ServerSays("{\"serverContent\":{\"turnComplete\":true}}");
+
+            Task completed = await Task.WhenAny(farewell.Task, Task.Delay(2000));
+            Assert.Same(farewell.Task, completed);
+            Assert.True(await farewell.Task);
+            await session.StopAsync("test complete");
+        }
+
+        [Fact]
+        public async Task NpcFarewellEndsAfterItsCompletedTranscriptAndOrdinaryRepliesDoNot()
+        {
+            var transport = new FakeLiveTransport();
+            using var session = new LiveSession(Config(),
+                async (handle, ct) =>
+                {
+                    var client = new GeminiLiveClient(Config(), () => transport, "test-key",
+                        "gemini-3.8-live", "Aoede", "You are a mechanic.", handle);
+                    await client.ConnectAsync(ct);
+                    return client;
+                },
+                "npc_test", "Test NPC", "Aoede", "gemini-3.8-live");
+            var farewell = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            session.Farewell += speaker => farewell.TrySetResult(speaker);
+
+            await session.StartAsync(CancellationToken.None);
+            transport.ServerSays("{\"serverContent\":{\"outputTranscription\":{\"text\":\"I was just getting started.\"}}}");
+            transport.ServerSays("{\"serverContent\":{\"turnComplete\":true}}");
+            await Task.Delay(100);
+            Assert.False(farewell.Task.IsCompleted);
+
+            transport.ServerSays("{\"serverContent\":{\"outputTranscription\":{\"text\":\"All right, take care.\"}}}");
+            transport.ServerSays("{\"serverContent\":{\"turnComplete\":true}}");
+
+            Task completed = await Task.WhenAny(farewell.Task, Task.Delay(2000));
+            Assert.Same(farewell.Task, completed);
+            Assert.Equal("npc", await farewell.Task);
+            await session.StopAsync("test complete");
+        }
+
+        [Fact]
         public void PersonaCarriesIdentityMoodAndMemory()
         {
             var profile = new NpcProfile
@@ -224,7 +309,7 @@ namespace AnotherDay.Tests
                 Background = "Grew up in Strawberry, still owes money to the wrong people.",
                 IsMale = true,
                 Personality = new PersonalityTraits { Aggression = 0.7f, Confidence = 0.6f, Humor = 0.4f },
-                Voice = new VoiceAssignment { VoiceId = "Alnilam", VoiceName = "Alnilam", Style = "low and steady" }
+                Voice = new VoiceAssignment { VoiceId = "Alnilam", VoiceName = "Alnilam", Style = "steady and assured" }
             };
             var emotion = new EmotionState { Anger = 0.7f, Trust = 0.2f };
             var relationship = new Relationship { NpcId = "npc_1", TargetId = "player", Familiarity = 0.5f, Affinity = 0.2f };
@@ -248,6 +333,7 @@ namespace AnotherDay.Tests
             Assert.Contains("You alright?", persona);
             Assert.Contains("Strawberry", persona);
             Assert.Contains("acquaintance", persona);
+            Assert.Contains("Never invent a vest, uniform, hard hat, tools", persona);
             Assert.Contains("never say you are an AI", persona.Replace("Never", "never"));
         }
 
@@ -314,7 +400,7 @@ namespace AnotherDay.Tests
         public void BothKeyFamiliesAreAccepted()
         {
             Assert.False(SecretStore.LooksMalformed("AQ.Ab8RN6Jx_y-12345678901234567890123456789012", out _));
-            Assert.False(SecretStore.LooksMalformed("AIzaSyD-1234567890abcdefghijklmnopqrstu", out _));
+            Assert.False(SecretStore.LooksMalformed("AIza-not-a-real-test-key", out _));
         }
 
         [Fact]

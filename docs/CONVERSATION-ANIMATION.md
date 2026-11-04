@@ -4,6 +4,10 @@ Progress record for the animation, lip-sync and vehicle-stability pass. The
 Gemini Live voice path and the engagement system from the previous pass are
 unchanged.
 
+This is a chronological record: the original push-to-talk behavior in section 7
+was superseded by the hands-free follow-up in section 9. Current player controls
+are summarized in `README.md` and the in-game checklist in `docs/TESTING.md`.
+
 ## 1. Why GTA V closed
 
 Two real causes were found, both of the same kind: GTA natives called from a
@@ -47,9 +51,8 @@ re-applied against a driving player.
   into a car or onto a bicycle during a conversation ends it in a defined order
   (engagement → hold release → animator release → microphone → audio → pipe).
   Starting a conversation from a seat is still allowed.
-- Audio and network threads now only write atomic level/timestamp fields
-  (`_npcLevel`, `_npcAudioTicks`, `_micVoiceTicks`); they never read or write an
-  entity.
+-   Audio and network threads only write atomic speech timing fields
+  (`_npcAudioTicks`, `_micVoiceTicks`); they never read or write an entity.
 
 ## 3. Animation
 
@@ -69,13 +72,16 @@ tested without the game:
 
 Native application lives in `src/AnotherDay.Plugin/Game/ConversationAnimator.cs`:
 
-- **Mouth**: `SET_FACIAL_IDLE_ANIM_OVERRIDE(ped, "mic_chatter", "mp_facial")`
-  while the RMS of the PCM chunk that just reached the speakers is above the
-  threshold. `mp_facial` is requested up front and the override is applied only
-  once `HAS_ANIM_DICT_LOADED` is true, twice in a row every 600 ms (the ped's
-  own facial idle can consume the first application), and cleared the moment
-  audio stops, on `interrupted`, and on release. Player mouth is the same
-  mechanism driven by microphone VAD.
+- **Mouth**: GTA's `PLAY_FACIAL_ANIM` starts `mp_facial/mic_chatter` only while
+  player microphone or rendered NPC speech is active; `STOP_ANIM_TASK` with a
+  positive exit speed stops the facial clip when that speaker stops. NPC speech
+  is measured from the samples consumed by the audio output provider rather
+  than network arrival timestamps, so queued/generated audio cannot hold the
+  mouth open after playback has ended. Microphone activity uses the configured
+  speech threshold rather than low-level room noise, and overlapping activity
+  is resolved to one speaker so both faces do not talk at once. The facial
+  dictionary is requested asynchronously and the mouth animation starts only
+  after `HAS_ANIM_DICT_LOADED`.
 - **Gestures**: `TASK_PLAY_ANIM` with `48` (upper body + secondary task) so
   walking/driving tasks are untouched, from
   `gestures@m@standing@casual` / `gestures@f@standing@casual`; `DOES_ANIM_DICT_EXIST`
@@ -177,11 +183,13 @@ speak while the player was still talking. `P` is now push-to-talk:
 - Server-side silence detection is a safety net, not the turn boundary; its
   default was raised to 900 ms so a pause for breath is not a turn.
 
-Mouth movement, expressions and head tracking are unchanged: the mouth is driven
-by the RMS of the PCM chunk that just reached the speakers, and the head follows
-via the hold's look-at task. Lip movement is speech-timed, not phoneme-exact —
-there is no viseme data in Gemini's audio stream, so this is the reliable
-approximation, not a claim of frame-perfect synchronisation.
+Expressions and head tracking are unchanged: expressions follow the NPC's
+personality and the head follows the hold's look-at task. Mouth activity is
+thresholded separately for mic input and NPC playback, with a 150 ms player
+release window; simultaneous activity is resolved to the player. Lip movement
+is speech-timed, not phoneme-exact — there is no viseme data in Gemini's audio
+stream, so this is the reliable approximation, not a claim of frame-perfect
+synchronisation.
 
 
 ## 8. Reference alignment (2026-11-02)
@@ -190,12 +198,74 @@ A working LSPDFR plugin (NPCI) was decompiled read-only to compare techniques;
 see `docs/REFERENCE-NPCI.md` for the evidence. Three differences explained the
 "no mouth, no eye contact" reports and are now corrected here:
 
-1. **Facial dictionary was never requested.** `SET_FACIAL_IDLE_ANIM_OVERRIDE`
-   against a dictionary that is not resident is a silent no-op. `mp_facial` is
-   now requested on attach and every second until `HAS_ANIM_DICT_LOADED` is true.
-2. **Override applied once per tick.** The reference applies it twice in a row,
-   because the ped's own facial idle can consume the first call; that is what we
-   do now, every 600 ms instead of every 400 ms.
+1. **Facial dictionary was never requested.** A facial animation against a
+   dictionary that is not resident is a silent no-op. `mp_facial` is now
+   requested on attach and every second until `HAS_ANIM_DICT_LOADED` is true.
+2. **The speaking clip was not started explicitly.** `PLAY_FACIAL_ANIM` starts
+   the `mic_chatter` clip only while speech activity is detected, and
+   `STOP_ANIM_TASK` fades it when that speaker stops. The idle-override native
+   was tried but did not animate the peds in-game, so it is not used.
 3. **Look flags aimed at the feet.** `TASK_LOOK_AT_ENTITY` now uses flag `2048`
-   (head, not entity origin) and the body turn gets a 2000 ms task so it can
-   complete instead of being restarted every hold tick.
+   (head, not entity origin). The body turns when it is more than 25 degrees
+   off target, gets a 2500 ms task, and is not retried until three seconds later
+   so the turn has time to finish.
+
+## 9. Hands-free listening and turn recovery (2026-11-03)
+
+The previous push-to-talk flow reopened the microphone only after another key
+press and could keep treating an old speech flag as fresh speech, preventing
+silence from ending a turn. The current flow is:
+
+- Tap `P` once to open the voice conversation. The microphone stays available
+  for the active conversation; after Gemini completes its reply and playback
+  drains, listening resumes without another key press. `O` ends it manually,
+  while the normal conversation lifecycle still handles inactivity and safety.
+- A completed spoken goodbye from either speaker marks the conversation to end.
+  The plugin waits for Gemini's turn-complete signal and the queued closing
+  audio to drain before releasing the NPC, so the final reply is not cut off.
+  Pressing `P` to interrupt that closing reply cancels the pending goodbye.
+- New microphone activity timestamps drive the 1.1-second silence boundary, so
+  a latched speech indicator cannot keep a turn open forever.
+- Player audio is forwarded only while listening and is muted through the NPC's
+  audio tail. Holding `P` during an NPC reply still interrupts it; releasing
+  after speaking submits that interruption as a turn.
+- The state-machine tests cover persistent listening, follow-up turns,
+  interruption, and silent release. The corresponding in-game checks are in
+  `docs/TESTING.md`.
+
+## 10. Fast mouth release and observed police identity (2026-11-03)
+
+- The player-mouth release window is 60 ms. NPC mouth activity now follows
+  speech-level samples as the output provider consumes them; a silent rendered
+  block closes the mouth without waiting for the playback drain margin. That
+  margin still protects turn-taking.
+- When speech activity ends, the facial task is stopped with exit speed 16;
+  GTA documents that a higher positive `STOP_ANIM_TASK` exit speed fades faster.
+- Police and SWAT are identified from the documented `GET_PED_TYPE` values 6
+  and 27 (not 2 and 3, which are network/player types). The same native marks
+  medics and firefighters as types 20 and 21.
+- If an already-saved NPC is later observed as police, the service repairs a
+  conflicting category/occupation, persists the correction, and refreshes the
+  role-based speech style without changing that NPC's stable Gemini voice.
+  Prompts also treat the corrected role as authoritative over old memories.
+
+Native references (accessed 2026-11-03): [`GET_PED_TYPE`](https://raw.githubusercontent.com/citizenfx/natives/master/PED/GetPedType.md)
+and [`STOP_ANIM_TASK`](https://raw.githubusercontent.com/citizenfx/natives/master/TASK/StopAnimTask.md).
+
+Ride requests remain dialogue-only. The current Gemini Live contract provides
+transcripts but no structured, validated agreement-and-destination action; the
+plugin therefore does not board the player or assign a driving task from speech.
+
+## 11. NPC mouth timing follows rendered playback (2026-11-04)
+
+The prior NPC mouth signal estimated an end time from network chunk arrival and
+payload length. When Gemini delivered several seconds of audio ahead of real-time
+playback, that estimate kept the mouth open after the audible voice had ended.
+Lip-sync now reads each sample block as the NAudio output provider consumes it.
+The monitor computes a bounded RMS value and publishes only a speech-active flag
+using an atomic write; it allocates nothing and takes no lock on the render path.
+A silent output block closes the mouth on the next game animation tick, while
+turn-taking retains its separate playback-drain timing.
+
+Automated tests cover voiced-to-silent block transitions and reset behavior.
+In-game latency and facial-task fade still require observation in Story Mode.

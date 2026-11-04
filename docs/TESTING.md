@@ -6,7 +6,7 @@
 dotnet test tests\AnotherDay.Tests\AnotherDay.Tests.csproj
 ```
 
-Result on 2026-11-02: **93 passed, 0 failed** (`net10.0`, win-x64). The suite runs
+Result on 2026-11-03: **187 passed, 0 failed** (`net10.0`, win-x64). The suite runs
 with `GEMINI_API_KEY` cleared, so it exercises the offline path only; the Live
 protocol is covered by a scripted fake transport instead of a real socket.
 
@@ -38,6 +38,7 @@ protocol is covered by a scripted fake transport instead of a real socket.
 | `LiveProtocolTests.VoiceAssignmentIsStableAndNeverAFallbackVoice` | Voices are Gemini voices and survive a fresh engine/DB reopen. |
 | `LiveProtocolTests.VoiceChunksRoundTripThroughThePipePayload` | Mic buffers survive the base64 pipe payload unchanged. |
 | `ConversationEngagementTests.StaysEngagedAfterTheFirstResponse` | Answering once does not end the conversation. |
+| `ConversationEngagementTests.FarewellEndsOnlyAfterTheReplyAndItsAudioFinish` | A goodbye waits for completed reply audio before ending. |
 | `ConversationEngagementTests.StaysEngagedThroughNaturalPauses` | Three minutes of thinking is not a hang-up. |
 | `ConversationEngagementTests.EndsOnlyAfterTheConfiguredInactivityWindow` | Silence ends it only at the configured window. |
 | `ConversationEngagementTests.PlayerSpeechResetsTheInactivityWindow` | Any speech restarts the clock. |
@@ -53,11 +54,25 @@ protocol is covered by a scripted fake transport instead of a real socket.
 | `ConversationEngagementTests.AnEndedConversationDoesNotEndTwice` | An ended engagement is settled, not re-torn-down. |
 | `ConversationEngagementTests.SpokenDialogueNeverAppearsOnScreen` | Captions and `You:` lines are gone for good. |
 | `ConversationEngagementTests.LivePersonaRequiresEnglishAndStaysInTheConversation` | The Live persona pins English and in-conversation behaviour while keeping personality. |
+| `ConversationEngagementTests.LivePersonaIncludesRoadAndNearbyVehicleAwareness` | The Live persona receives the measured road and nearby-vehicle context. |
+| `ConversationEngagementTests.ConversationTargetPolicyLeavesRunningOrThreatenedPedsAlone` | Fleeing, running, sprinting, and fighting peds are not held for a conversation. |
+| `ConversationEngagementTests.GeneratedVoiceStyleUsesRoleAndPlaceNotDemographicAccentLabels` | Voice style follows role and grounded location, not demographic labels. |
+| `ConversationEngagementTests.IdentityGenerationDoesNotAssignAccentsFromRace` | Generated accents do not come from race-coded model names. |
+| `ConversationEngagementTests.OrdinaryCivilianIsNotAssignedAnUnobservedJob` | An ordinary civilian is not assigned a random specific occupation. |
+| `ConversationEngagementTests.OldRandomCivilianJobIsReplacedByGroundedIdentity` | Previously saved random civilian occupations are corrected. |
+| `ConversationEngagementTests.GangArchetypeDoesNotInventASpecificGangJob` | Gang-affiliated pedestrians get a grounded group role, not an invented job. |
+| `ConversationEngagementTests.OldSpecificGangJobIsReplacedWhenGangRoleIsObserved` | Previously saved specific gang jobs are corrected to the observed role. |
+| `PersistenceTests.ReturningCivilianPedRepairsPreviouslyGeneratedJobGuess` | Previously saved wrong job claims are corrected in the NPC database. |
+| `VoiceGenderTests.ConfidentFemaleIdentityDoesNotGenerateLowPitchDirections` | Confidence does not instruct a woman's voice to sound low. |
+| `VoiceGenderTests.StoredLowRegisterFemaleVoiceIsReassigned` | A saved low-register voice is replaced for a female character. |
 | `ConversationEngagementTests.TheEnglishRuleForbidsSwitchingLanguages` | The shared rule forbids drifting into another language. |
 | `ConversationAnimationTests.MouthOpensWhileNpcAudioPlays` | NPC audio opens the mouth. |
 | `ConversationAnimationTests.MouthClosesAsSoonAsTheAudioStops` | Silence closes it again, immediately. |
-| `ConversationAnimationTests.QuietAudioDoesNotMoveTheMouth` | Low-level audio does not keep the jaw going. |
+| `ConversationAnimationTests.PlayerMouthIgnoresMicNoiseBelowConfiguredSpeechThreshold` | Mic noise below the configured speech threshold does not animate the player. |
+| `ConversationAnimationTests.NpcMouthIgnoresQuietPlaybackNoise` | Quiet output noise does not animate the NPC. |
+| `PlaybackSpeechMonitorTests.SpeechIsActiveOnlyForTheCurrentRenderedAudioBlock` | NPC speech activity clears when the output provider renders silence. |
 | `ConversationAnimationTests.PlayerMouthFollowsTheMicrophone` | The player's face follows own-voice detection. |
+| `ConversationAnimationTests.OnlyTheCurrentSpeakerMovesTheirMouthWhenActivityOverlaps` | Overlapping activity never animates both speakers. |
 | `ConversationAnimationTests.ListeningProducesNodsInsteadOfTalking` | Listening is a distinct, non-talking state. |
 | `ConversationAnimationTests.GesturesAreNotSpammedEveryTick` | 15 s of speech yields a few gestures, not one per frame. |
 | `ConversationAnimationTests.AggressiveAndNervousNpcsUseDifferentGestures` | Personality changes the gesture vocabulary. |
@@ -74,6 +89,7 @@ protocol is covered by a scripted fake transport instead of a real socket.
 | `GameThreadQueueTests.AFailingActionDoesNotStopTheRest` | One bad action cannot stall the queue. |
 | `GameThreadQueueTests.DrainIsBoundedPerTick` | A flood cannot stall a frame. |
 | `ConversationOwnershipTests.StartingAConversationCreatesAUniqueOwnedSession` | Every conversation gets its own id, identity and start time. |
+| `ConversationOwnershipTests.ConversationPartnerIsProtectedFromTheMomentTheHandshakeStarts` | Ambient movement actions cannot override the selected NPC during connection setup. |
 | `ConversationOwnershipTests.AGenerationThatIsNotLiveCannotClaimTheConversation` | Only the current generation owns the conversation. |
 | `ConversationOwnershipTests.ReleasedSessionAcceptsNoFurtherCallbacks` | An ended conversation ignores late frames. |
 | `ConversationOwnershipTests.DrivingAwayReleasesThePartner` | Leaving the interaction radius ends it. |
@@ -89,6 +105,7 @@ protocol is covered by a scripted fake transport instead of a real socket.
 | `VoiceGenderTests.ResolutionFallsBackToAVerifiedVoiceOfTheRightSex` | A bad assignment resolves to a safe voice. |
 | `VoiceGenderTests.AStoredAssignmentWithTheWrongSexIsCorrected` | A wrong stored assignment is corrected and persisted. |
 | `VoiceGenderTests.AFemaleCharacterKeepsOneFemaleVoiceAcrossSessions` | Voice identities stay stable across sessions. |
+| `LiveProtocolTests.NpcFarewellEndsAfterItsCompletedTranscriptAndOrdinaryRepliesDoNot` | The NPC can end with a spoken goodbye; ordinary replies do not. |
 
 ## Live voice checklist (needs a working key and the game)
 
@@ -105,8 +122,8 @@ session open and return audio).
 6. Wait ~30 s in silence, then speak again → still the same conversation and voice.
 7. Talk to somebody sitting in a car → they answer through the window, do not get
    out, and do not drive off; ask for a ride and they accept or refuse in character.
-8. `P` → `Stopped listening.`; the NPC walks off and traffic resumes. `P` again →
-   the same voice returns.
+8. Say "take care" → the NPC's closing reply plays fully, then they walk off
+   and traffic resumes. `O` ends immediately; a later `P` starts a fresh talk.
 9. Walk away past ~45 m → the session closes by itself.
 10. Fire a gun → the conversation ends immediately.
 11. Listen for Spanish or any other language → every reply is English.
@@ -117,7 +134,7 @@ session open and return audio).
 15. `Alt+Shift+7` → both NPCs speak their own lines audibly, in English.
 16. Windows speech must never be heard: no line is played by SAPI.
 17. **Watch the mouth while they talk.** It moves with the voice, stops on the
-    last word, and stops instantly when you interrupt them.
+    last word without an extended delay, and stops instantly when you interrupt them.
 18. **Watch the body.** They gesture while speaking, nod while listening, and a
     nervous ped gestures less than an aggressive one.
 19. **Watch yourself.** Your own character's mouth moves while you speak and
@@ -140,6 +157,27 @@ session open and return audio).
 26. **Male voice.** Repeat with a male ped: the voice must sound male.
 27. **Acknowledgement.** On starting, the ped turns to face you and stays
     attentive while you speak, rather than answering with their back turned.
+28. **Moving targets.** Press `P` while the nearest pedestrian is running away
+    or fighting. They should keep their current behavior; a nearby idle pedestrian
+    should be selected instead, or the plugin should explain that nobody is
+    available.
+29. **Street awareness.** Start a conversation with a ped on a road and vehicles
+    within roughly 12 m. Tell them they are blocking traffic; their response
+    should acknowledge the scene rather than inventing unrelated surroundings.
+30. **Role voice.** Compare a police officer, business worker, mechanic/driver,
+    and gang-affiliated ped. Their word choice and delivery should reflect role
+    and personality; the same individual should keep the same assigned Gemini
+    voice. Do not expect an exact copy of GTA's prerecorded voice.
+31. **Natural goodbye.** Say "take care" or "be safe" and listen for the NPC's
+    closing line in full before they resume ambient behavior. Also let an NPC
+    finish a clear goodbye; the conversation should release after its audio
+    drains. Interrupting the closing line with `P` should keep the conversation
+    open.
+32. **Grounded occupation and appearance.** Ask an ordinary civilian about their
+    work or clothes. They should not invent being a barista or construction
+    worker, or claim a vest/hard hat unless an observed role or outfit actually
+    establishes it. Repeat with a confident female ped; her voice should not be
+    pushed into a low register.
 
 ## Shipped-binary smoke test
 
@@ -193,18 +231,19 @@ criterion; all start with Story Mode, not Online.
 |---|---|---|
 | 1 | Launch with the plugin installed | No crash; `Another Day in GTA loaded` notification and the HUD line: `AI: connected, waiting for first snapshot`, then `AI: online`/`AI: offline mode` once snapshots arrive. **Verified 2026-11-02** (main menu, see below). |
 | 2 | Walk near pedestrians | HUD counts rise; `<data>\logs\*.log` shows identities assigned. |
-| 3 | Target a pedestrian and press `Alt+Shift+8` | Text box opens; the NPC answers with a line matching its personality. Typing `p` in the message does not start a recording or reopen the box. |
+| 3 | Press `P` once near a pedestrian | A spoken conversation opens; speak naturally without holding the key. |
 | 4 | Ask two different NPCs the same question | Different wording, tone and voice. |
 | 5 | Insult an NPC with a high-aggression profile | Refusal/disengagement, not agreement. |
-| 6 | Hold `P`, speak, release | Transcript path works; spoken reply in the NPC's assigned voice. |
-| 7 | Start another line and talk over it | Current playback stops when push-to-talk begins. |
-| 8 | Quit to desktop, relaunch, return to the same spot | Same voice, and (if Gemini is configured) the NPC references the earlier exchange. |
-| 9 | Press `Alt+Shift+7` near two NPCs | They talk to each other, one speaker at a time. |
-| 10 | Fire a weapon near different NPC types | Police/gang/civilian react differently per personality and distance. |
-| 11 | Pull a gun on a timid NPC | Flee action executes and completes without stuck tasks. |
-| 12 | Disconnect the network during a conversation | Game stays responsive; offline lines continue; HUD reports offline mode. |
-| 13 | Watch for 10+ minutes in a busy area | No frame-time collapse, no duplicate/overlapping voices. |
-| 14 | Inspect `%LOCALAPPDATA%\AnotherDayInGTA` | Database, cache and logs present; no API key in logs. |
+| 6 | Speak after the connection is ready, then pause | The NPC answers in its assigned voice; the mic resumes after the response. |
+| 7 | Speak again after the response without pressing `P` | The next turn is captured and answered hands-free. |
+| 8 | Hold `P` while the NPC is answering, speak, release | The NPC stops speaking; the interrupted turn is submitted on release. |
+| 9 | Quit to desktop, relaunch, return to the same spot | Same voice, and (if Gemini is configured) the NPC references the earlier exchange. |
+| 10 | Press `Alt+Shift+7` near two NPCs | They talk to each other, one speaker at a time. |
+| 11 | Fire a weapon near different NPC types | Police/gang/civilian react differently per personality and distance. |
+| 12 | Pull a gun on a timid NPC | Flee action executes and completes without stuck tasks. |
+| 13 | Disconnect the network during a conversation | Game stays responsive; offline lines continue; HUD reports offline mode. |
+| 14 | Watch for 10+ minutes in a busy area | No frame-time collapse, no duplicate/overlapping voices. |
+| 15 | Inspect `%LOCALAPPDATA%\AnotherDayInGTA` | Database, cache and logs present; no API key in logs. |
 
 After each session run `tools\diagnose.ps1` and keep its output: it records which
 items the logs evidence so "not tested" and "failed" stay distinguishable.
@@ -228,7 +267,7 @@ service-...log        IPC listening on pipe \\.\pipe\AnotherDayInGTA
 
 No crash, no plugin tick errors, no database fallback. This covered the load and
 connect paths only: the session ended at the main menu, so no pedestrian was
-bound and no key was pressed. Items 2-13 still need Story Mode.
+bound and no key was pressed. Items 2-15 still need Story Mode.
 
 ### Third-party mods that fail on the same launch (not this project)
 
@@ -252,7 +291,7 @@ proven by the offline suite.
 | H2 | Stay silent for ten seconds | They stay put and keep facing you; no wandering, no walking away. |
 | H3 | Step to their side and behind them | Body turns back to you, head stays on you. |
 | H4 | Talk for a minute | Mouth moves with the audio only; gestures, nods and expressions appear; they never walk off mid-sentence. |
-| H5 | Press `P`, then watch the same pedestrian for a minute | They resume ordinary walking and street behaviour; no frozen ped left standing. |
+| H5 | Press `O`, then watch the same pedestrian for a minute | They resume ordinary walking and street behaviour; no frozen ped left standing. |
 | H6 | Talk to someone in a car | Driver stays at the wheel, head turns to you, no leave-vehicle task, no crash. |
 | H7 | Repeat H1–H5 with a male and a female pedestrian | Same behaviour, voice matches the body. |
 | H8 | Walk away mid-conversation | Conversation ends, they walk off on their own again. |
@@ -264,17 +303,20 @@ proven by the offline suite.
   in this environment. Everything exercised above used the offline provider.
 - Long-session performance under real population density.
 
-## Push-to-talk checklist (P)
+## Hands-free conversation checklist (P)
 
-`P` is now push-to-talk, not a toggle. `O` ends the conversation.
+Press `P` once to start a conversation. It keeps listening between turns while
+the conversation is active; `O` ends it manually, and the normal lifecycle can
+also end it. Holding `P` while the NPC speaks is an optional deliberate
+interruption.
 
 | # | Do this | Expect |
 |---|---------|--------|
-| P1 | Approach a walking pedestrian, hold `P`, say a full sentence, release | They stop and turn on the press; nothing is spoken over you while `P` is held |
-| P2 | Release `P` and wait | The NPC answers the whole sentence, starting after the release, not during it |
-| P3 | Keep holding `P` and pause mid-sentence for a second | No answer starts; the turn is only submitted on release |
-| P4 | Hold `P` again while they are still answering | Their audio stops on the press (deliberate interruption), the new turn is answered after release |
-| P5 | Release `P` and walk away | The conversation stays alive; pressing `P` again continues it |
+| P1 | Approach a walking pedestrian and tap `P` once | They stop and turn while the voice session opens; the mic starts when ready |
+| P2 | Speak a full sentence, then pause for at least 1.1 seconds | The NPC answers after the pause; the mic is not forwarded during its audio |
+| P3 | After the answer ends, speak again without pressing `P` | The second turn is captured and answered automatically |
+| P4 | Stay silent for two minutes | No empty turn is sent; the conversation remains ready and the mic stays open |
+| P5 | Hold `P` while the NPC is answering, speak, then release | The NPC is interrupted; release submits the new turn |
 | P6 | Press `O` | Conversation ends, the pedestrian walks off and behaves normally |
 | P7 | Talk to someone in a car | They keep driving; no task is ever put on the vehicle and they never get out for you |
 | P8 | After several conversations, watch the same street | Peds still enter and exit vehicles and react to traffic; nothing is pinned |
@@ -290,7 +332,7 @@ Anything that fails here is a report, not a pass: H1–H8 above still apply to f
 | L2 | Talk to A, then walk to B and hold `P` | A is released first; B becomes the partner with a new voice |
 | L3 | Talk to someone, then die | The conversation ends during death; no stale target after respawn |
 | L4 | Respawn at the hospital, talk to a new pedestrian | New conversation opens without restarting GTA V or the service |
-| L5 | Hold `P`, say "All right, you be safe", release | NPC gives a short farewell, then everything releases; `P` works on the next person |
+| L5 | Speak "All right, you be safe" or "take care of yourself out there" | The conversation ends like pressing `O`; the NPC resumes walking and `P` works on the next person |
 | L6 | Say "Thank you" mid-conversation | NPC answers normally; the conversation does not end |
 | L7 | Talk to a passenger through the window | They still drive; no enter/leave task is applied |
 | L8 | Watch a conversation partner | They stop, body and head turn to you, mouth moves with their audio, gestures appear |

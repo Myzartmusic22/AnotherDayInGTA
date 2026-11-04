@@ -78,43 +78,46 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
-        public void UnusedListeningWindowClosesInsteadOfHoldingTheMicrophoneForever()
+        public void ListeningStaysOpenUntilTheConversationEnds()
         {
             var talk = new TalkStateMachine();
             talk.Press(T0);
             talk.Ready(T0);
 
-            Assert.Equal(TalkAction.None, talk.Tick(T0.AddSeconds(TalkStateMachine.ListenWindowSeconds + 1)));
-            Assert.Equal(TalkPhase.Open, talk.Phase);
-            Assert.False(talk.ShouldStream);
+            Assert.Equal(TalkAction.None, talk.Tick(T0.AddHours(2)));
+            Assert.Equal(TalkPhase.Listening, talk.Phase);
+            Assert.True(talk.ShouldStream);
             Assert.True(talk.ConversationActive);
         }
 
         [Fact]
-        public void SilentReleaseDoesNotSubmitAnEmptyTurn()
+        public void KeyReleaseDuringListeningLeavesTheMicrophoneOpen()
         {
             var talk = new TalkStateMachine();
             talk.Press(T0);
             talk.Ready(T0);
 
             Assert.Equal(TalkAction.None, talk.Release(T0.AddMilliseconds(120)));
-            Assert.Equal(TalkPhase.Open, talk.Phase);
+            Assert.Equal(TalkPhase.Listening, talk.Phase);
+            Assert.True(talk.ShouldStream);
         }
 
         [Fact]
-        public void LaterPressIsPushToTalkAndReleaseSubmits()
+        public void SpeechAfterTheFirstResponseSubmitsAutomatically()
         {
             var talk = new TalkStateMachine();
             talk.Press(T0);
             talk.Ready(T0);
-            talk.Release(T0.AddMilliseconds(100)); // silent tap closes the window
+            talk.NoteSpeech(T0.AddSeconds(1));
+            Assert.Equal(TalkAction.SubmitTurn, talk.Tick(T0.AddSeconds(2.2)));
+            Assert.Equal(TalkPhase.AwaitingReply, talk.Phase);
 
-            Assert.Equal(TalkAction.BeginTurn, talk.Press(T0.AddSeconds(10)));
-            Assert.Equal(TalkPhase.Holding, talk.Phase);
+            talk.ReplyFinished();
+            Assert.Equal(TalkPhase.Listening, talk.Phase);
             Assert.True(talk.ShouldStream);
 
-            talk.NoteSpeech(T0.AddSeconds(11));
-            Assert.Equal(TalkAction.SubmitTurn, talk.Release(T0.AddSeconds(12)));
+            talk.NoteSpeech(T0.AddSeconds(4));
+            Assert.Equal(TalkAction.SubmitTurn, talk.Tick(T0.AddSeconds(5.2)));
             Assert.Equal(TalkPhase.AwaitingReply, talk.Phase);
         }
 
@@ -133,7 +136,7 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
-        public void ReplyFinishingReturnsToOpenWithoutLosingTheConversation()
+        public void ReplyFinishingResumesListeningWithoutLosingTheConversation()
         {
             var talk = new TalkStateMachine();
             talk.Press(T0);
@@ -142,22 +145,38 @@ namespace AnotherDay.Tests
             talk.Tick(T0.AddSeconds(2.2));
 
             talk.ReplyFinished();
-            Assert.Equal(TalkPhase.Open, talk.Phase);
+            Assert.Equal(TalkPhase.Listening, talk.Phase);
             Assert.True(talk.ConversationActive);
-            Assert.False(talk.ShouldStream);
+            Assert.True(talk.ShouldStream);
         }
 
         [Fact]
-        public void AHeldTurnIsSubmittedOnRelease()
+        public void SilentInterruptionResumesHandsFreeListening()
         {
             var talk = new TalkStateMachine();
             talk.Press(T0);
             talk.Ready(T0);
-            talk.Release(T0.AddMilliseconds(100));
+            talk.NoteSpeech(T0.AddSeconds(1));
+            talk.Tick(T0.AddSeconds(2.2));
 
-            talk.Press(T0.AddSeconds(5));
-            talk.NoteSpeech(T0.AddSeconds(9));
-            Assert.Equal(TalkAction.SubmitTurn, talk.Release(T0.AddSeconds(9.5)));
+            Assert.Equal(TalkAction.BeginTurn, talk.Press(T0.AddSeconds(3)));
+            Assert.Equal(TalkAction.None, talk.Release(T0.AddSeconds(3.1)));
+            Assert.Equal(TalkPhase.Listening, talk.Phase);
+            Assert.True(talk.ShouldStream);
+        }
+
+        [Fact]
+        public void InterruptedTurnIsSubmittedOnRelease()
+        {
+            var talk = new TalkStateMachine();
+            talk.Press(T0);
+            talk.Ready(T0);
+            talk.NoteSpeech(T0.AddSeconds(1));
+            talk.Tick(T0.AddSeconds(2.2));
+
+            Assert.Equal(TalkAction.BeginTurn, talk.Press(T0.AddSeconds(5)));
+            talk.NoteSpeech(T0.AddSeconds(6));
+            Assert.Equal(TalkAction.SubmitTurn, talk.Release(T0.AddSeconds(6.5)));
         }
 
         [Fact]
@@ -166,7 +185,8 @@ namespace AnotherDay.Tests
             var talk = new TalkStateMachine();
             talk.Press(T0);
             talk.Ready(T0);
-            talk.Release(T0.AddMilliseconds(100));
+            talk.NoteSpeech(T0.AddSeconds(1));
+            talk.Tick(T0.AddSeconds(2.2));
             talk.Press(T0.AddSeconds(4));
 
             Assert.Equal(TalkAction.None, talk.Press(T0.AddSeconds(4.1)));

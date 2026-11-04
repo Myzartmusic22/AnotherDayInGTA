@@ -68,7 +68,8 @@ namespace AnotherDay.Service.Live
         public bool IsActive(string npcId) => Find(npcId) != null;
 
         public async Task<LiveSession> AcquireAsync(ActiveNpc npc, bool playerArmed, bool playerAiming,
-            bool npcInVehicle, bool npcIsDriver, string npcVehicleModel, CancellationToken ct)
+            bool npcInVehicle, bool npcIsDriver, string npcVehicleModel, bool npcOnRoad,
+            bool npcVehiclesNearby, CancellationToken ct)
         {
             if (npc == null || npc.Profile == null) throw new ArgumentNullException(nameof(npc));
             if (!Available) throw new LiveApiException("Live voice is not available: " + UnavailableReason);
@@ -104,9 +105,11 @@ namespace AnotherDay.Service.Live
                     voice = await _voices.ReassignAsync(npc.Profile, npc.Emotion, "incompatible with character model")
                         .ConfigureAwait(false);
                 }
+                npc.Profile.Voice = voice;
+                await _db.SaveProfileAsync(npc.Profile).ConfigureAwait(false);
                 string voiceName = GeminiVoices.Resolve(voice?.VoiceId, npc.Profile.IsMale);
                 string persona = await BuildPersonaAsync(npc, playerArmed, playerAiming,
-                    npcInVehicle, npcIsDriver, npcVehicleModel).ConfigureAwait(false);
+                    npcInVehicle, npcIsDriver, npcVehicleModel, npcOnRoad, npcVehiclesNearby).ConfigureAwait(false);
 
                 string apiKey = _gemini.ApiKeyForLive;
                 var session = new LiveSession(
@@ -131,6 +134,7 @@ namespace AnotherDay.Service.Live
                 Log.Info("Live voice session opened for " + npc.Profile.DisplayName + " (" + voiceName + ")");
                 return session;
             }
+
             finally { _acquireGate.Release(); }
         }
 
@@ -150,7 +154,8 @@ namespace AnotherDay.Service.Live
         }
 
         private async Task<string> BuildPersonaAsync(ActiveNpc npc, bool playerArmed, bool playerAiming,
-            bool npcInVehicle, bool npcIsDriver, string npcVehicleModel)
+            bool npcInVehicle, bool npcIsDriver, string npcVehicleModel, bool npcOnRoad,
+            bool npcVehiclesNearby)
         {
             NpcProfile profile = npc.Profile;
             EmotionState emotion = npc.Emotion ?? await _db.GetEmotionAsync(profile.NpcId).ConfigureAwait(false) ?? new EmotionState();
@@ -174,7 +179,8 @@ namespace AnotherDay.Service.Live
 
             return LivePersona.Build(profile, emotion, relationship, memories, turns,
                 _registry.CurrentZone, _registry.CurrentWeather, _registry.ClockHour,
-                playerArmed, playerAiming, npcInVehicle, npcIsDriver, npcVehicleModel);
+                playerArmed, playerAiming, npcInVehicle, npcIsDriver, npcVehicleModel,
+                npcOnRoad, npcVehiclesNearby);
         }
 
         private async Task PersistTurnAsync(string npcId, string playerText, string npcText)

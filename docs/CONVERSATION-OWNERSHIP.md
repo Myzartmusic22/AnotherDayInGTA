@@ -146,13 +146,14 @@ The correction is structural:
 
 ### Spoken goodbye
 
-`FarewellDetector` scores the **completed player turn** after push-to-talk
-release: departure cues are decisive (2), gratitude adds one, and a question or
-"but/wait/one more" cancels two. That deliberately keeps "thank you" or
-"thanks, I appreciate it" mid-conversation as an ordinary turn (the NPC answers
-it) while "Thanks, take care", "I gotta go" and "See you later" end it. The
-service raises one `farewell` event per session; the plugin lets the NPC's reply
-play to completion and then runs the same teardown as a hang-up.
+`FarewellDetector` scores either speaker's **completed turn**: departure cues
+are decisive (2), gratitude adds one, and a question or "but/wait/one more"
+cancels two. That deliberately keeps "thank you" or "thanks, I appreciate it"
+mid-conversation as an ordinary turn while "Thanks, take care", "I gotta go"
+and "See you later" end it. The service raises one `farewell` event per closing
+exchange; the plugin waits for the model turn and closing audio to finish, then
+uses the same teardown as pressing `O` so the NPC resumes ordinary pedestrian
+behaviour. Pressing `P` to interrupt cancels a pending farewell.
 
 ### Facing
 

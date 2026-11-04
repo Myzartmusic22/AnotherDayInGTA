@@ -82,14 +82,6 @@ namespace AnotherDay.Plugin
         // discarded instead of taking over the new conversation.
         private readonly ConversationOwner _owner = new ConversationOwner();
 
-        // A spoken farewell is recognised by the service in the completed player
-        // turn. The NPC's reply still plays; only then is everything released,
-        // and the release is the same centralized teardown as every other end.
-        private volatile bool _farewellPending;
-        private volatile bool _farewellHeardReply;
-        private DateTime _farewellDeadlineUtc = DateTime.MinValue;
-        private DateTime _farewellHardDeadlineUtc = DateTime.MinValue;
-
         // Death and respawn are detected by the player ped disappearing or being
         // replaced, not by a distance check that cannot run while it is gone.
         private int _playerHandleLast;
@@ -108,27 +100,37 @@ namespace AnotherDay.Plugin
 
         // Audio levels are measured where the audio actually is (capture and
         // pipe threads) and read by the game thread, never the other way round.
-        private float _micLevel;
         private long _micVoiceTicks;
-        private float _npcLevel;
         private long _npcAudioTicks;
         private bool _playerWasInVehicle;
 
-        // The talk key as one explicit state: the first press opens the
-        // conversation and the microphone, later presses are push-to-talk.
-        // Every transition lives in AnotherDay.Shared/TalkStateMachine.cs and is
-        // unit-tested; the plugin only executes the action it returns.
+        // The talk key as one explicit state: the first press opens a
+        // hands-free conversation, and speech ends automatically after silence.
+        // A press during an NPC reply still deliberately interrupts it.
         private readonly TalkStateMachine _talk = new TalkStateMachine();
         private readonly object _talkSync = new object();
 
-        // True once real speech was measured in the turn currently in flight.
-        // The audio thread sets it; the game thread consumes it.
+        // Speech activity is timestamped on the capture thread and consumed by
+        // the game thread, so a sticky "heard speech" flag cannot mask silence.
         private volatile bool _pttHasSpeech;
+        private long _lastTalkSpeechTicks;
+        private bool _liveTurnComplete;
+        private bool _farewellPending;
+        private ConversationEndReason _farewellEndReason;
 
         // The microphone may only be forwarded while the machine is listening
         // and our own playback is silent, so the NPC's voice from the speakers
         // is never sent back to Gemini as if the player had said it.
-        private bool MicOpen => _talk.ShouldStream && !_livePlayer.IsPlaying;
+        private bool MicOpen
+        {
+            get
+            {
+                bool shouldStream;
+                lock (_talkSync) shouldStream = _talk.ShouldStream;
+                return shouldStream && !_livePlayer.IsPlaying &&
+                    DateTime.UtcNow.Ticks >= Interlocked.Read(ref _npcAudioTicks);
+            }
+        }
 
         private SettingsDto _settings = new SettingsDto();
         private PedSnapshotResponse _lastSnapshot;
@@ -159,7 +161,7 @@ namespace AnotherDay.Plugin
                 {
                     // The NPC being spoken to belongs to the conversation, not
                     // to ambient action commands, until the talk is over.
-                    IsConversationPartner = handle => _liveActive && handle == _liveNpcHandle
+                    IsConversationPartner = handle => _owner.OwnsNpc(handle)
                 };
                 _audio = new AudioPlayback();
                 _audio.SetVolume(_config.Volume);
@@ -167,8 +169,6 @@ namespace AnotherDay.Plugin
                 _livePlayer.SetVolume(_config.Volume);
                 _mic = new MicStreamer(_config.MicDevice);
                 _mic.BufferAvailable += OnMicBuffer;
-                GameThread.MarkCurrent();
-                _gameThreadId = Thread.CurrentThread.ManagedThreadId;
                 _pipe = new PipeClient(_config.PipeName, _config.TokenPath);
 
                 // Draw every frame. Game text is immediate-mode: drawn for one
@@ -195,6 +195,14 @@ namespace AnotherDay.Plugin
             try
             {
                 if (_config == null) return;
+                if (_gameThreadId == 0)
+                {
+                    // The script's constructor may run on a loader thread.
+                    // Bind native access to the first actual GTA script tick.
+                    GameThread.MarkCurrent();
+                    _gameThreadId = Thread.CurrentThread.ManagedThreadId;
+                }
+
                 GTA.Player player = Gta.Player;
                 if (player == null || !player.Character.Exists())
                 {
@@ -211,7 +219,7 @@ namespace AnotherDay.Plugin
                 _gameThread.Drain();
 
                 // Lip-sync runs at frame rate, not on the 100 ms logic cadence:
-                // mouth movement has to follow the audio chunks, not the AI.
+                // mouth movement follows samples consumed by the output device.
                 UpdateAnimator();
 
                 DrawHud(player);
@@ -300,7 +308,7 @@ namespace AnotherDay.Plugin
 
         private string ControlsHint()
         {
-            return "hold " + _config.VoiceHotkey + " to talk | " + _config.HangupHotkey + " end | " +
+            return "press " + _config.VoiceHotkey + " once to talk hands-free | " + _config.HangupHotkey + " end | " +
                 _config.SocialHotkey + " social | " + _config.StatusHotkey + " panel";
         }
 
@@ -447,6 +455,7 @@ namespace AnotherDay.Plugin
                     if (pair.Key == excludeHandle) continue;
                     Ped ped = Entity.FromHandle(pair.Key) as Ped;
                     if (ped == null || !ped.Exists() || ped.IsDead) continue;
+                    if (!CanStartConversationWith(ped)) continue;
                     float distance = ped.Position.DistanceTo(player.Position);
                     if (distance < bestDistance)
                     {
@@ -458,24 +467,34 @@ namespace AnotherDay.Plugin
             return best;
         }
 
+        private static bool CanStartConversationWith(Ped ped)
+        {
+            try
+            {
+                return ConversationTargetPolicy.CanStart(
+                    Function.Call<bool>(GTA.Native.Hash.IS_PED_FLEEING, ped),
+                    Function.Call<bool>(GTA.Native.Hash.IS_PED_RUNNING, ped),
+                    Function.Call<bool>(GTA.Native.Hash.IS_PED_SPRINTING, ped),
+                    Function.Call<bool>(GTA.Native.Hash.IS_PED_IN_COMBAT, ped, 0));
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Debug("Could not check pedestrian activity before conversation: " + ex.Message);
+                return false;
+            }
+        }
+
         // ------------------------------------------------------ live voice
 
         /// <summary>
-        /// Push-to-talk press. Starts the conversation if there is none, and
-        /// deliberately stops whatever the NPC is currently saying so the two of
-        /// us are never talking at once.
+        /// Starts a hands-free conversation, or deliberately interrupts an NPC
+        /// response when the key is pressed again.
         /// </summary>
         private void BeginPushToTalk()
         {
             if (_settings != null && !_settings.MasterEnabled)
             {
                 ShowMessage("The mod is currently disabled.");
-                return;
-            }
-
-            if (_farewellPending)
-            {
-                ShowMessage("You already said goodbye.");
                 return;
             }
 
@@ -507,18 +526,18 @@ namespace AnotherDay.Plugin
                 // Pressing the talk key over an NPC who is speaking is an
                 // interruption the player asked for: their audio stops on this
                 // frame and the new turn is what they answer.
+                _farewellPending = false;
+                _farewellEndReason = ConversationEndReason.None;
                 _livePlayer.Flush();
                 Interlocked.Exchange(ref _npcAudioTicks, 0);
-                Interlocked.Exchange(ref _npcLevel, 0f);
             }
 
             _pttHasSpeech = false;
         }
 
         /// <summary>
-        /// Push-to-talk release. This ends the player's turn, not the
-        /// conversation: the service is told the sentence is finished so Gemini
-        /// answers all of it, and nothing is cancelled.
+        /// Releasing an interruption key ends that player turn. Ordinary key-up
+        /// during hands-free listening has no effect on the conversation.
         /// </summary>
         private void EndPushToTalk()
         {
@@ -530,11 +549,12 @@ namespace AnotherDay.Plugin
         }
 
         /// <summary>
-        /// Sends the finished sentence as one turn. Release must never cut the
-        /// NPC's answer short, so nothing here stops playback or the session.
+        /// Sends the finished sentence as one turn. The next listening window
+        /// opens only after Gemini completes its reply and playback drains.
         /// </summary>
         private void SubmitTurn(DateTime now)
         {
+            _liveTurnComplete = false;
             VoiceLink link = _voice;
             if (link != null && link.IsConnected) link.SendTurnEnd();
             if (_pttHasSpeech) _engagement?.NotePlayerSpeech(now);
@@ -542,9 +562,9 @@ namespace AnotherDay.Plugin
         }
 
         /// <summary>
-        /// Runs once per frame on the game thread: feeds real microphone speech
-        /// into the machine, ends an automatic turn on silence, and returns to
-        /// "waiting for the key" once the NPC has finished answering.
+        /// Runs once per frame on the game thread: detects new microphone speech,
+        /// ends the player turn after silence, and resumes listening once the
+        /// model and speaker playback have both finished.
         /// </summary>
         private void UpdateTalk()
         {
@@ -552,9 +572,14 @@ namespace AnotherDay.Plugin
 
             DateTime now = DateTime.UtcNow;
             TalkAction action;
+            long speechTicks = Interlocked.Read(ref _micVoiceTicks);
             lock (_talkSync)
             {
-                if (_pttHasSpeech) _talk.NoteSpeech(now);
+                if (_pttHasSpeech && speechTicks > _lastTalkSpeechTicks)
+                {
+                    _talk.NoteSpeech(new DateTime(speechTicks, DateTimeKind.Utc));
+                    _lastTalkSpeechTicks = speechTicks;
+                }
                 action = _talk.Tick(now);
             }
 
@@ -562,7 +587,14 @@ namespace AnotherDay.Plugin
 
             bool stillSpeaking = _livePlayer.IsPlaying ||
                 now.Ticks < Interlocked.Read(ref _npcAudioTicks);
-            if (stillSpeaking) return;
+            if (ConversationLifecyclePolicy.ShouldFinishFarewell(_farewellPending, _liveTurnComplete, stillSpeaking))
+            {
+                HangUp(_farewellEndReason == ConversationEndReason.NpcSaidGoodbye
+                    ? ConversationEndReason.NpcSaidGoodbye
+                    : ConversationEndReason.PlayerSaidGoodbye);
+                return;
+            }
+            if (stillSpeaking || !_liveTurnComplete) return;
 
             lock (_talkSync)
             {
@@ -570,10 +602,23 @@ namespace AnotherDay.Plugin
             }
         }
 
-        /// <summary>Explicit end of the conversation, separate from the talk key.</summary>
+        /// <summary>Ends the conversation from the configured key or a spoken farewell.</summary>
         private void HangUp()
         {
-            if (_liveActive || _liveStarting) StopVoiceConversation("closed by player");
+            HangUp(ConversationEndReason.PlayerStopped);
+        }
+
+        private void HangUp(ConversationEndReason reason)
+        {
+            if (_liveActive || _liveStarting)
+            {
+                string message = reason == ConversationEndReason.PlayerSaidGoodbye
+                    ? "you said goodbye"
+                    : reason == ConversationEndReason.NpcSaidGoodbye
+                        ? "they said goodbye"
+                        : "closed by player";
+                StopVoiceConversation(message, reason);
+            }
             else ShowMessage("No conversation to end.");
         }
 
@@ -609,23 +654,22 @@ namespace AnotherDay.Plugin
                 return false;
             }
 
-            // Restored to the earlier working behaviour: the partner is the
-            // nearest pedestrian the service has bound, within the configured
-            // conversation range. No forward cone, no line-of-sight test and no
-            // proximity bubble decide who the player is addressing.
+            // Choose the nearest bound pedestrian in range, but never override
+            // an active flee/run/sprint or combat task just to start a chat.
             float range = CurrentRange();
             int handle = preferredHandle;
             if (handle != 0)
             {
                 Ped preferred = Entity.FromHandle(handle) as Ped;
                 if (preferred == null || !preferred.Exists() || preferred.IsDead ||
-                    preferred.Position.DistanceTo(Gta.Player.Character.Position) > range)
+                    preferred.Position.DistanceTo(Gta.Player.Character.Position) > range ||
+                    !CanStartConversationWith(preferred))
                     handle = 0;
             }
             if (handle == 0) handle = NearestBinding(range);
             if (handle == 0)
             {
-                ShowMessage("No one close enough to talk to.");
+                ShowMessage("No nearby pedestrian is available to talk; someone may be running, fleeing, or in a fight.");
                 return false;
             }
 
@@ -669,7 +713,6 @@ namespace AnotherDay.Plugin
             BeginEngagement(ped, handle, binding?.NpcId);
             _liveStarting = true;
             _liveError = null;
-            _farewellPending = false;
             int generation = session.Generation;
             _playerHandleLast = Gta.Player.Character.Handle;
 
@@ -688,7 +731,9 @@ namespace AnotherDay.Plugin
                 PlayerAiming = Gta.Player.IsAiming,
                 NpcInVehicle = ped.IsInVehicle(),
                 NpcIsDriver = ped.IsInVehicle() && ConversationHold.IsDriving(ped, ped.CurrentVehicle),
-                NpcVehicleModel = SafeVehicleName(ped)
+                NpcVehicleModel = SafeVehicleName(ped),
+                NpcOnRoad = SafeNpcOnRoad(ped),
+                NpcVehiclesNearby = SafeNpcVehiclesNearby(ped)
             };
 
             _liveNpcHandle = handle;
@@ -815,9 +860,11 @@ namespace AnotherDay.Plugin
                 _liveStarting = false;
                 _liveError = null;
 
-                // The handshake may have taken longer than the player's press,
-                // so the first listening window opens here instead of on a key
-                // that is already up.
+                // The handshake may have taken longer than the player's press.
+                // Start listening now and keep the mic open until hang-up.
+                _pttHasSpeech = false;
+                _lastTalkSpeechTicks = Interlocked.Read(ref _micVoiceTicks);
+                _liveTurnComplete = false;
                 lock (_talkSync) _talk.Ready(DateTime.UtcNow);
                 _engagement?.MarkReady(DateTime.UtcNow);
                 if (ready != null)
@@ -851,8 +898,8 @@ namespace AnotherDay.Plugin
                 }
 
                 ShowMessage("Talking to " + _liveNpcName + " (" + (_liveVoiceName ?? "live voice") + ", " +
-                    (session.IsMale ? "male" : "female") + "). Hold " + _config.VoiceHotkey +
-                    " to speak, release to let them answer, " + _config.HangupHotkey + " to end.");
+                    (session.IsMale ? "male" : "female") + "). Speak naturally; press " + _config.VoiceHotkey +
+                    " to interrupt, " + _config.HangupHotkey + " to end.");
             }
             catch (Exception ex)
             {
@@ -875,12 +922,13 @@ namespace AnotherDay.Plugin
 
                 // Real speech keeps the engagement alive even before the model
                 // reports a transcript, so a thoughtful pause is not a hang-up.
-                if (rms >= Math.Max(0.005f, _config.BargeInThreshold))
+                if (AnimationSettings.IsPlayerSpeech(rms, _config.BargeInThreshold))
+                    Interlocked.Exchange(ref _micVoiceTicks, DateTime.UtcNow.Ticks);
+
+                if (AnimationSettings.IsPlayerSpeech(rms, _config.BargeInThreshold))
                 {
                     _engagement?.NotePlayerSpeech(DateTime.UtcNow);
                     _pttHasSpeech = true;
-                    Interlocked.Exchange(ref _micLevel, rms);
-                    Interlocked.Exchange(ref _micVoiceTicks, DateTime.UtcNow.Ticks);
                 }
 
                 link.SendAudio(pcm);
@@ -899,24 +947,24 @@ namespace AnotherDay.Plugin
             // Nothing is spoken over the player while they hold the talk key.
             // If the model answered a fragment the silence detector heard, that
             // answer is discarded; the real turn is answered after release.
-            if (_talk.Phase == TalkPhase.Holding) return;
+            bool holding;
+            lock (_talkSync) holding = _talk.Phase == TalkPhase.Holding;
+            if (holding) return;
 
-            // Pipe thread: measuring is cheap and touches no game state. The
-            // mouth on the game thread reads these two values.
+            // This estimate is only for mic/turn timing. Lip movement follows
+            // samples consumed by the output device, since network chunks can
+            // arrive ahead of playback and sit queued.
             float level = Level(pcm24k);
-            Interlocked.Exchange(ref _npcLevel, level);
-            if (level >= 0.012f)
+            if (AnimationSettings.IsNpcSpeech(level))
             {
-                double seconds = pcm24k.Length / 2.0 / 24000.0 + 0.08;
+                double seconds = pcm24k.Length / 2.0 / 24000.0 +
+                    AnimationSettings.DefaultNpcMouthTailMilliseconds / 1000.0;
                 Interlocked.Exchange(ref _npcAudioTicks,
                     DateTime.UtcNow.Ticks + (long)(seconds * TimeSpan.TicksPerSecond));
             }
 
             _livePlayer.Play(pcm24k);
 
-            // A farewell is only over once the NPC has actually replied; a slow
-            // first audio frame must not be mistaken for a finished goodbye.
-            if (_farewellPending) _farewellHeardReply = true;
         }
 
         private static float Level(byte[] pcm16)
@@ -955,7 +1003,6 @@ namespace AnotherDay.Plugin
                     // The mouth closes on the same tick: an interrupted NPC must
                     // not keep mouthing words nobody can hear.
                     Interlocked.Exchange(ref _npcAudioTicks, 0);
-                    Interlocked.Exchange(ref _npcLevel, 0f);
                     break;
                 case VoiceEventKinds.InputTranscript:
                     // Audio only: the transcript lives in the service for memory
@@ -966,17 +1013,18 @@ namespace AnotherDay.Plugin
                     if (!string.IsNullOrWhiteSpace(text)) _engagement?.NoteNpcResponse(DateTime.UtcNow);
                     break;
                 case VoiceEventKinds.TurnComplete:
+                    _liveTurnComplete = true;
                     _engagement?.NoteTurnComplete(DateTime.UtcNow);
                     break;
                 case VoiceEventKinds.Farewell:
-                    // Recognised in the completed player turn. The NPC's short
-                    // farewell still plays; the centralized teardown runs once
-                    // the audio has drained, releasing partner, mic and socket.
+                    // Do not tear down on the transcript event: the model's
+                    // closing audio may still be queued for playback.
                     _farewellPending = true;
-                    _farewellDeadlineUtc = DateTime.UtcNow.AddSeconds(1.5);
-                    _farewellHardDeadlineUtc = DateTime.UtcNow.AddSeconds(15);
-                    lock (_talkSync) _talk.Reset();
-                    PluginLog.Info("Player said goodbye; releasing after the farewell.");
+                    _farewellEndReason = string.Equals(text, "npc", StringComparison.OrdinalIgnoreCase)
+                        ? ConversationEndReason.NpcSaidGoodbye
+                        : ConversationEndReason.PlayerSaidGoodbye;
+                    PluginLog.Info((_farewellEndReason == ConversationEndReason.NpcSaidGoodbye ? "NPC" : "Player") +
+                        " farewell detected; waiting for the closing audio to finish.");
                     break;
                 case VoiceEventKinds.SessionEnded:
                 case VoiceEventKinds.Closed:
@@ -987,6 +1035,7 @@ namespace AnotherDay.Plugin
                     _liveErrorUntilUtc = DateTime.UtcNow.AddSeconds(12);
                     PluginLog.Warn("Live voice error: " + text);
                     if (!_liveReady) StopVoiceConversation(text ?? "live voice error");
+                    else _liveTurnComplete = true;
                     break;
             }
         }
@@ -1030,7 +1079,8 @@ namespace AnotherDay.Plugin
 
             // A lost hold or engagement is repaired, not treated as a reason to
             // stop watching the conversation.
-            if (_hold == null && pedAlive) BeginEngagement(ped, _liveNpcHandle, _liveNpcId);
+            if ((_hold == null || !_hold.IsAttached) && pedAlive)
+                BeginEngagement(ped, _liveNpcHandle, _liveNpcId);
 
             EngagementDecision decision = _engagement != null
                 ? _engagement.Evaluate(DateTime.UtcNow, distance, pedAlive, true,
@@ -1177,19 +1227,6 @@ namespace AnotherDay.Plugin
                 StopVoiceConversation(pedValid ? "you walked too far away" : "they are gone", releaseReason);
                 return;
             }
-
-            if (!_farewellPending) return;
-
-            // The goodbye is over once the NPC stops speaking and the short
-            // drain has elapsed; the hard deadline covers a farewell reply that
-            // never arrives, so the player is never trapped in it.
-            bool stillSpeaking = _livePlayer.IsPlaying ||
-                DateTime.UtcNow.Ticks < Interlocked.Read(ref _npcAudioTicks);
-            if ((_farewellHeardReply && !stillSpeaking && DateTime.UtcNow >= _farewellDeadlineUtc) ||
-                DateTime.UtcNow >= _farewellHardDeadlineUtc)
-            {
-                StopVoiceConversation("you said goodbye", ConversationEndReason.PlayerSaidGoodbye);
-            }
         }
 
         private static bool PlayerAlive(GTA.Player player)
@@ -1219,11 +1256,11 @@ namespace AnotherDay.Plugin
             if (animator == null) return;
 
             DateTime nowUtc = DateTime.UtcNow;
-            float npcLevel = Interlocked.CompareExchange(ref _npcLevel, 0f, 0f);
-            bool npcAudio = nowUtc.Ticks < Interlocked.Read(ref _npcAudioTicks);
-            bool playerTalking = nowUtc.Ticks - Interlocked.Read(ref _micVoiceTicks) <
-                TimeSpan.TicksPerMillisecond * 350;
-            animator.Tick(nowUtc, npcLevel, npcAudio, playerTalking);
+            bool npcAudio = _livePlayer != null && _livePlayer.IsSpeechActive;
+            bool playerTalking = AnimationSettings.IsPlayerMouthActive(nowUtc,
+                Interlocked.Read(ref _micVoiceTicks), MicOpen);
+            animator.Tick(nowUtc, npcAudio ? AnimationSettings.DefaultMouthLevel : 0f,
+                npcAudio, playerTalking);
         }
 
         private void StopVoiceConversation(string reason)
@@ -1293,6 +1330,8 @@ namespace AnotherDay.Plugin
                 _liveActive = false;
                 _liveReady = false;
                 _liveStarting = false;
+                _farewellPending = false;
+                _farewellEndReason = ConversationEndReason.None;
                 lock (_talkSync) _talk.Reset();
                 _pttHasSpeech = false;
                 _liveNpcHandle = 0;
@@ -1300,14 +1339,9 @@ namespace AnotherDay.Plugin
                 _liveNpcName = null;
                 _liveNpcLabel = null;
                 _liveVoiceName = null;
-                _farewellPending = false;
-                _farewellHeardReply = false;
-                _farewellDeadlineUtc = DateTime.MinValue;
-                _farewellHardDeadlineUtc = DateTime.MinValue;
                 _playerHandleLast = 0;
 
                 Interlocked.Exchange(ref _npcAudioTicks, 0);
-                Interlocked.Exchange(ref _npcLevel, 0f);
                 Interlocked.Exchange(ref _micVoiceTicks, 0);
 
                 _mic.Stop();
@@ -1449,6 +1483,8 @@ namespace AnotherDay.Plugin
             switch (reason)
             {
                 case ConversationEndReason.OutOfRange: return "you walked too far away";
+                case ConversationEndReason.PlayerSaidGoodbye: return "you said goodbye";
+                case ConversationEndReason.NpcSaidGoodbye: return "they said goodbye";
                 case ConversationEndReason.PlayerDied: return "player died";
                 case ConversationEndReason.Unavailable: return "they are gone";
                 case ConversationEndReason.NpcDied: return "they are gone";
@@ -1473,6 +1509,7 @@ namespace AnotherDay.Plugin
                 case "plugin unloading": return ConversationEndReason.PluginUnload;
                 case "you turned to someone else": return ConversationEndReason.PlayerSwitchedTarget;
                 case "you said goodbye": return ConversationEndReason.PlayerSaidGoodbye;
+                case "they said goodbye": return ConversationEndReason.NpcSaidGoodbye;
                 default: return ConversationEndReason.SessionLost;
             }
         }
@@ -1693,6 +1730,36 @@ namespace AnotherDay.Plugin
                 return string.IsNullOrWhiteSpace(name) ? "car" : name;
             }
             catch { return null; }
+        }
+
+        private static bool SafeNpcOnRoad(Ped ped)
+        {
+            try
+            {
+                return ped != null && ped.Exists() &&
+                    Function.Call<bool>(GTA.Native.Hash.IS_POINT_ON_ROAD,
+                        ped.Position.X, ped.Position.Y, ped.Position.Z, 0);
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Debug("Could not check whether the conversation partner is on a road: " + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool SafeNpcVehiclesNearby(Ped ped)
+        {
+            try
+            {
+                return ped != null && ped.Exists() &&
+                    Function.Call<bool>(GTA.Native.Hash.IS_ANY_VEHICLE_NEAR_POINT,
+                        ped.Position.X, ped.Position.Y, ped.Position.Z, 12f);
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Debug("Could not check for vehicles near the conversation partner: " + ex.Message);
+                return false;
+            }
         }
 
         private void OnAborted(object sender, EventArgs e)

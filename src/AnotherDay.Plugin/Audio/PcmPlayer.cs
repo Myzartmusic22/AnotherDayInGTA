@@ -18,15 +18,39 @@ namespace AnotherDay.Plugin.Audio
     /// </summary>
     internal sealed class PcmPlayer : IDisposable
     {
+        private sealed class SpeechMonitoringSampleProvider : ISampleProvider
+        {
+            private readonly ISampleProvider _source;
+            private readonly PlaybackSpeechMonitor _monitor;
+
+            public SpeechMonitoringSampleProvider(ISampleProvider source, PlaybackSpeechMonitor monitor)
+            {
+                _source = source;
+                _monitor = monitor;
+            }
+
+            public WaveFormat WaveFormat { get { return _source.WaveFormat; } }
+
+            public int Read(float[] buffer, int offset, int count)
+            {
+                int read = _source.Read(buffer, offset, count);
+                _monitor.Record(buffer, offset, read);
+                return read;
+            }
+        }
+
         public const int SampleRate = 24000;
+        private static readonly TimeSpan OutputDrainMargin = TimeSpan.FromMilliseconds(300);
 
         private readonly object _sync = new object();
         private readonly BufferedWaveProvider _buffer;
         private readonly MonoToStereoSampleProvider _stereo;
+        private readonly PlaybackSpeechMonitor _speechMonitor = new PlaybackSpeechMonitor();
         private readonly VolumeSampleProvider _volume;
         private readonly WaveOutEvent _output;
         private readonly SpatialSmoothing _spatial = new SpatialSmoothing();
         private float _gain = 1f;
+        private DateTime _outputDrainUntilUtc = DateTime.MinValue;
         private bool _disposed;
 
         public PcmPlayer()
@@ -38,7 +62,8 @@ namespace AnotherDay.Plugin.Audio
                 ReadFully = true // silence instead of stalls between chunks
             };
             _stereo = new MonoToStereoSampleProvider(_buffer.ToSampleProvider());
-            _volume = new VolumeSampleProvider(_stereo) { Volume = 1f };
+            _volume = new VolumeSampleProvider(
+                new SpeechMonitoringSampleProvider(_stereo, _speechMonitor)) { Volume = 1f };
             _output = new WaveOutEvent { DesiredLatency = 90, NumberOfBuffers = 3 };
             _output.Init(_volume.ToWaveProvider16());
         }
@@ -49,10 +74,15 @@ namespace AnotherDay.Plugin.Audio
             {
                 lock (_sync)
                 {
-                    return !_disposed && _buffer.BufferedDuration > TimeSpan.FromMilliseconds(60);
+                    return !_disposed &&
+                        (_buffer.BufferedDuration > TimeSpan.FromMilliseconds(60) ||
+                         DateTime.UtcNow < _outputDrainUntilUtc);
                 }
             }
         }
+
+        /// <summary>Whether the current output-device block contains audible speech.</summary>
+        public bool IsSpeechActive { get { return _speechMonitor.IsSpeaking; } }
 
         /// <summary>Master level: the config/panel volume, not the distance.</summary>
         public void SetVolume(float volume)
@@ -108,6 +138,11 @@ namespace AnotherDay.Plugin.Audio
                 try
                 {
                     _buffer.AddSamples(pcm16, 0, pcm16.Length);
+                    // WaveOut can still be emitting its device buffers after
+                    // BufferedDuration reaches zero. Keep mic forwarding gated
+                    // through that tail so the NPC's final syllable is not
+                    // captured and sent back to Gemini.
+                    _outputDrainUntilUtc = DateTime.UtcNow + _buffer.BufferedDuration + OutputDrainMargin;
                     if (_output.PlaybackState != PlaybackState.Playing) _output.Play();
                 }
                 catch (Exception ex)
@@ -124,6 +159,8 @@ namespace AnotherDay.Plugin.Audio
             {
                 if (_disposed) return;
                 try { _buffer.ClearBuffer(); } catch { }
+                _outputDrainUntilUtc = DateTime.MinValue;
+                _speechMonitor.Reset();
             }
         }
 
@@ -136,6 +173,8 @@ namespace AnotherDay.Plugin.Audio
                 try { _output.Stop(); } catch { }
                 try { _output.Dispose(); } catch { }
                 try { _buffer.ClearBuffer(); } catch { }
+                _outputDrainUntilUtc = DateTime.MinValue;
+                _speechMonitor.Reset();
             }
         }
     }

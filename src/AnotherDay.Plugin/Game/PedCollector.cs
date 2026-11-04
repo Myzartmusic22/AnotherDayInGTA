@@ -125,8 +125,8 @@ namespace AnotherDay.Plugin.Game
             {
                 bool inVehicle = ped.IsInVehicle();
                 int pedType = Function.Call<int>(Hash.GET_PED_TYPE, ped);
-                if (pedType == 2) return NpcCategories.Police;
-                if (pedType == 3) return NpcCategories.Gang;
+                string roleCategory = NpcCategories.FromGamePedType(pedType);
+                if (!string.IsNullOrEmpty(roleCategory)) return roleCategory;
                 if (ped.Model.IsGangPed) return NpcCategories.Gang;
                 if (inVehicle) return IsDriver(ped) ? NpcCategories.Driver : NpcCategories.Passenger;
                 return NpcCategories.Civilian;

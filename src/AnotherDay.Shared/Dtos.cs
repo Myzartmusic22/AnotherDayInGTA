@@ -19,6 +19,23 @@ namespace AnotherDay.Shared
         public const string Mechanic = "mechanic";
         public const string Homeless = "homeless";
         public const string Other = "other";
+
+        public static string FromGamePedType(int pedType)
+        {
+            // Values from GTA V's GET_PED_TYPE ePedType enum.
+            switch (pedType)
+            {
+                case 6:
+                case 27:
+                    return Police;
+                case 20:
+                    return Paramedic;
+                case 21:
+                    return Firefighter;
+                default:
+                    return null;
+            }
+        }
     }
 
     public static class ActionTypes

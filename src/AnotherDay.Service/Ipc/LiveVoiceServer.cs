@@ -230,7 +230,8 @@ namespace AnotherDay.Service.Ipc
             try
             {
                 LiveSession session = await manager.AcquireAsync(npc, start.PlayerArmed, start.PlayerAiming,
-                    start.NpcInVehicle, start.NpcIsDriver, start.NpcVehicleModel, ct).ConfigureAwait(false);
+                    start.NpcInVehicle, start.NpcIsDriver, start.NpcVehicleModel, start.NpcOnRoad,
+                    start.NpcVehiclesNearby, ct).ConfigureAwait(false);
 
                 // Stream model audio and control events to the game as they arrive.
                 session.AudioOut += chunk => _ = SendAudioAsync(pipe, writeGate, chunk, ct);
@@ -242,7 +243,7 @@ namespace AnotherDay.Service.Ipc
                 // to keep the NPC engaged through the next pause.
                 session.TurnCommitted += (playerText, npcText) => _ = SendEventAsync(pipe, writeGate,
                     VoiceEventKinds.TurnComplete, null, ct);
-                session.Farewell += () => _ = SendEventAsync(pipe, writeGate, VoiceEventKinds.Farewell, null, ct);
+                session.Farewell += speaker => _ = SendEventAsync(pipe, writeGate, VoiceEventKinds.Farewell, speaker, ct);
                 session.Closed += reason => _ = SendEventAsync(pipe, writeGate, VoiceEventKinds.SessionEnded, reason, ct);
 
                 await SendAsync(pipe, writeGate, VoiceMessageTypes.Ready, new VoiceReadyResponse

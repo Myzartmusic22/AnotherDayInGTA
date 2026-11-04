@@ -36,6 +36,22 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
+        public void ConversationPartnerIsProtectedFromTheMomentTheHandshakeStarts()
+        {
+            var owner = new ConversationOwner();
+            ConversationSession session = owner.Begin(101, "npc_one", "One", true,
+                new Vec3 { X = 0f, Y = 0f, Z = 0f }, Noon);
+
+            Assert.True(owner.OwnsNpc(101));
+            Assert.False(owner.OwnsNpc(102));
+            Assert.True(owner.MarkReady(session.Generation));
+            Assert.True(owner.OwnsNpc(101));
+
+            owner.BeginEnding(session.ConversationId, ConversationEndReason.PlayerStopped, Noon.AddSeconds(1));
+            Assert.False(owner.OwnsNpc(101));
+        }
+
+        [Fact]
         public void AGenerationThatIsNotLiveCannotClaimTheConversation()
         {
             Start(7);

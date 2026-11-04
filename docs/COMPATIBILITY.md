@@ -87,9 +87,17 @@ The game folder already contains ScriptHookV plugins: ELS, `iFruitAddon2`,
 - **World-event sensing is proximity-based.** Events seen by the plugin (gunfire,
   crashes, fights, police escalation, aiming, zone/weather change, deaths) are
   propagated by radius; NPCs outside the snapshot radius learn nothing.
+- **Conversation scene context is a start-time snapshot.** The service is told
+  whether the NPC is on a road and whether any vehicle is within 12 m when the
+  conversation opens. This does not track changing traffic or make the NPC move
+  out of the street.
 - **Voice variety is bounded by the provider catalogue.** Each NPC gets a
-  persistent assignment from the Gemini voice list with a stable style string;
-  the same voice can be shared by several NPCs when the catalogue is exhausted.
+  persistent assignment from the Gemini voice list; role, temperament and known
+  rural location shape delivery without inferring an accent from race or
+  appearance. The same voice can be shared by several NPCs when the catalogue
+  is exhausted. Gemini cannot reproduce the original GTA voice actor or
+  arbitrary native ambient lines, and the mod does not currently have
+  per-model voice-profile metadata.
 - **Enhanced edition is unsupported.** Different executable, different hook.
 
 ## Environment items that could not be verified without the game running
@@ -99,9 +107,10 @@ The game folder already contains ScriptHookV plugins: ELS, `iFruitAddon2`,
   `gestures@m@standing@casual` / `gestures@f@standing@casual` dictionaries and
   expressions from the vanilla `facials@gen_*` clipsets. Both are requested and
   existence-checked at runtime, but how they look on each ped model is unverified.
-- Lip movement uses `SET_FACIAL_IDLE_ANIM_OVERRIDE` with `mp_facial/mic_chatter`
-  gated on live audio RMS; the resulting jaw motion has only been reasoned about,
-  not watched in game.
+- Lip movement uses `PLAY_FACIAL_ANIM` with `mp_facial/mic_chatter`, gated by
+  live microphone/playback activity and stopped with a positive animation exit
+  speed on silence. The runtime wiring is covered by tests, but the jaw motion
+  still needs in-game confirmation.
 - Actual microphone capture and playback mixing inside GTA.
 - Natives used by `ActionExecutor` under a live world (the signatures compile and
   match SHVDN 3.7.0.201, but behaviour at runtime is unverified).

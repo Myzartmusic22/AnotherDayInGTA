@@ -28,10 +28,11 @@ namespace AnotherDay.Service.Ai
             sb.AppendLine("Age: " + p.Age);
             sb.AppendLine("Occupation: " + p.Occupation);
             sb.AppendLine("Category: " + p.Category);
+            sb.AppendLine("Your listed category and occupation are your real identity. They override any conflicting old memory; never claim a different job.");
             sb.AppendLine("Neighborhood: " + (c.Zone ?? p.Neighborhood));
             sb.AppendLine("Background: " + p.Background);
             sb.AppendLine("Personality: " + p.Personality.ShortDescription() + " (traits: " + TraitsText(p.Personality) + ")");
-            sb.AppendLine("Speech style: " + SpeechText(p.Speech));
+            sb.AppendLine("Speech style: " + VoiceEngine.BuildStyle(p, null));
             if (p.Interests.Count > 0) sb.AppendLine("Interests: " + string.Join(", ", p.Interests));
             if (p.Beliefs.Count > 0) sb.AppendLine("Opinions: " + string.Join("; ", p.Beliefs));
             if (p.Quirks.Count > 0) sb.AppendLine("Quirks: " + string.Join("; ", p.Quirks));
@@ -110,7 +111,7 @@ namespace AnotherDay.Service.Ai
                 EmotionState e = i < c.Emotions.Count ? c.Emotions[i] : new EmotionState();
                 sb.AppendLine("- id=" + p.NpcId + " | " + p.DisplayName + ", " + p.Age + ", " + p.Occupation + " (" + p.Category + ")");
                 sb.AppendLine("  Personality: " + p.Personality.ShortDescription() + "; " + TraitsText(p.Personality));
-                sb.AppendLine("  Speech: " + SpeechText(p.Speech));
+                sb.AppendLine("  Speech: " + VoiceEngine.BuildStyle(p, null));
                 sb.AppendLine("  Emotion: " + e.Summary());
                 if (p.Beliefs.Count > 0) sb.AppendLine("  Opinions: " + string.Join("; ", p.Beliefs.Take(2)));
             }
@@ -269,14 +270,6 @@ namespace AnotherDay.Service.Ai
         {
             return string.Format("friendliness {0:0.0}, aggression {1:0.0}, confidence {2:0.0}, intelligence {3:0.0}, suspicion {4:0.0}, humor {5:0.0}, empathy {6:0.0}, impulsiveness {7:0.0}, sociability {8:0.0}, loyalty {9:0.0}",
                 p.Friendliness, p.Aggression, p.Confidence, p.Intelligence, p.Suspicion, p.Humor, p.Empathy, p.Impulsiveness, p.Sociability, p.Loyalty);
-        }
-
-        private static string SpeechText(SpeechStyle s)
-        {
-            if (s == null) return "natural";
-            return string.Format("accent {0}, pace {1}, pitch {2}, vocabulary {3}, profanity {4}, sentences {5}{6}",
-                s.Accent, s.Pace, s.Pitch, s.Vocabulary, s.Profanity, s.SentenceLength,
-                string.IsNullOrWhiteSpace(s.VerbalTic) ? "" : ", verbal tic \"" + s.VerbalTic + "\"");
         }
 
         private static string F(float value) => value.ToString("0.00");

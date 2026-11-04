@@ -194,15 +194,35 @@ namespace AnotherDay.Shared
 
     public sealed class AnimationSettings
     {
-        /// <summary>PCM RMS above which the mouth opens. Native audio is quiet.</summary>
-        public float MouthLevel { get; set; } = 0.012f;
+        public const float DefaultMouthLevel = 0.012f;
 
-        public double PlayerMouthHoldSeconds { get; set; } = 0.35;
+        public const int DefaultPlayerMouthHoldMilliseconds = 60;
+        public const int DefaultNpcMouthTailMilliseconds = 25;
+        public double PlayerMouthHoldSeconds { get; set; } = 0.06;
         public double GestureMinSeconds { get; set; } = 2.4;
         public double GestureMaxSeconds { get; set; } = 6.0;
         public double NodMinSeconds { get; set; } = 4.0;
         public double NodMaxSeconds { get; set; } = 10.0;
         public double ExpressionSeconds { get; set; } = 6.0;
+
+        public static bool IsPlayerSpeech(float level, float configuredThreshold)
+        {
+            return level >= Math.Max(0.005f, configuredThreshold);
+        }
+
+        public static bool IsNpcSpeech(float level)
+        {
+            return level >= DefaultMouthLevel;
+        }
+
+        public static bool IsPlayerMouthActive(DateTime nowUtc, long lastSpeechTicks, bool microphoneOpen)
+        {
+            return microphoneOpen &&
+                lastSpeechTicks > 0 &&
+                nowUtc.Ticks >= lastSpeechTicks &&
+                nowUtc.Ticks - lastSpeechTicks <
+                    TimeSpan.TicksPerMillisecond * DefaultPlayerMouthHoldMilliseconds;
+        }
     }
 
     /// <summary>A dictionary/clip pair that <c>TASK_PLAY_ANIM</c> can play.</summary>
@@ -282,13 +302,15 @@ namespace AnotherDay.Shared
 
             if (_style == null) _style = ConversationStyle.Neutral;
 
-            MouthOpen = npcAudio && npcLevel >= _settings.MouthLevel;
             PlayerMouthOpen = playerSpeaking;
+            // The input and output activity windows can briefly overlap. Prefer
+            // the live microphone speaker so both faces never talk at once.
+            MouthOpen = npcAudio && !PlayerMouthOpen;
 
-            Phase = MouthOpen
-                ? ConversationAnimationPhase.NpcSpeaking
-                : PlayerMouthOpen
-                    ? ConversationAnimationPhase.PlayerSpeaking
+            Phase = PlayerMouthOpen
+                ? ConversationAnimationPhase.PlayerSpeaking
+                : MouthOpen
+                    ? ConversationAnimationPhase.NpcSpeaking
                     : ConversationAnimationPhase.Listening;
 
             if (MouthOpen)

@@ -12,9 +12,8 @@ namespace AnotherDay.Plugin.Game
     /// somebody driving, riding a bicycle, falling, swimming, fighting or
     /// entering a car, and no facial override on a dead or ragdolled ped.
     ///
-    /// Lip movement is driven by the RMS of the PCM chunk that just reached the
-    /// speakers, so it starts and stops with the audio rather than with a
-    /// transcript, and an interruption closes the mouth immediately.
+    /// Lip movement uses GTA's mic_chatter facial clip while microphone or
+    /// speaker audio is active, and stops it when speech ends.
     /// </summary>
     internal sealed class ConversationAnimator
     {
@@ -31,11 +30,11 @@ namespace AnotherDay.Plugin.Game
 
         private bool _npcMouthOpen;
         private bool _playerMouthOpen;
-        private DateTime _npcMouthRefreshUtc = DateTime.MinValue;
-        private DateTime _playerMouthRefreshUtc = DateTime.MinValue;
         private bool _expressionApplied;
         private DateTime _nextDictRequestUtc = DateTime.MinValue;
         private DateTime _nextFacialDictRequestUtc = DateTime.MinValue;
+        private DateTime _npcMouthRefreshUtc = DateTime.MinValue;
+        private DateTime _playerMouthRefreshUtc = DateTime.MinValue;
         private readonly System.Collections.Generic.HashSet<string> _missingDictionaries =
             new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private DateTime _lastFailureLogUtc = DateTime.MinValue;
@@ -58,9 +57,7 @@ namespace AnotherDay.Plugin.Game
             _state.Reset(DateTime.UtcNow);
             _missingDictionaries.Clear();
 
-            // Stream the facial dictionary before the first word. The override
-            // is a silent no-op on a dictionary that was never requested, and
-            // that alone makes the mouth look completely dead.
+            // Stream the facial dictionary before the first word.
             RequestFacialDictionary(DateTime.UtcNow);
         }
 
@@ -100,11 +97,11 @@ namespace AnotherDay.Plugin.Game
 
                 AnimationDecision decision = _state.Tick(nowUtc, npcLevel, npcAudio, playerSpeaking);
 
-                SetMouth(npc, decision.MouthOpen && faceOk, nowUtc,
-                    ref _npcMouthOpen, ref _npcMouthRefreshUtc);
-
                 if (decision.ExpressionChanged || !_expressionApplied)
                     ApplyExpression(npc, decision.Expression);
+
+                SetMouth(npc, decision.MouthOpen && faceOk, nowUtc,
+                    ref _npcMouthOpen, ref _npcMouthRefreshUtc);
 
                 if (decision.Gesture != ConversationGesture.None && bodyOk)
                     PlayGesture(npc, decision.Gesture, nowUtc);
@@ -137,7 +134,7 @@ namespace AnotherDay.Plugin.Game
                 {
                     try
                     {
-                        Function.Call(Hash.CLEAR_FACIAL_IDLE_ANIM_OVERRIDE, npc);
+                        StopMouthAnimation(npc);
                         if (_expressionApplied)
                             Function.Call(Hash.SET_FACIAL_CLIPSET, npc, _style.BaseFacialClipset);
                     }
@@ -145,9 +142,12 @@ namespace AnotherDay.Plugin.Game
                 }
 
                 Ped player = Player();
-                if (player != null && _playerMouthOpen)
+                if (player != null)
                 {
-                    try { Function.Call(Hash.CLEAR_FACIAL_IDLE_ANIM_OVERRIDE, player); }
+                    try
+                    {
+                        StopMouthAnimation(player);
+                    }
                     catch (Exception ex) { LogFailure("Resetting the player face failed", ex); }
                 }
             }
@@ -158,9 +158,9 @@ namespace AnotherDay.Plugin.Game
             _npcMouthOpen = false;
             _playerMouthOpen = false;
             _expressionApplied = false;
+            _nextFacialDictRequestUtc = DateTime.MinValue;
             _npcMouthRefreshUtc = DateTime.MinValue;
             _playerMouthRefreshUtc = DateTime.MinValue;
-            _nextFacialDictRequestUtc = DateTime.MinValue;
         }
 
         private void SetMouth(Ped ped, bool open, DateTime nowUtc, ref bool applied, ref DateTime refreshUtc)
@@ -169,37 +169,32 @@ namespace AnotherDay.Plugin.Game
             {
                 if (open)
                 {
-                    // The dictionary has to be resident or the override silently
-                    // does nothing. The working reference implementation
-                    // requests it and waits for it instead of applying into an
-                    // unloaded dictionary for the whole conversation.
+                    // The dictionary has to be resident or the facial clip
+                    // silently does nothing.
                     if (!Function.Call<bool>(Hash.HAS_ANIM_DICT_LOADED, FacialDictionary))
                     {
                         if (applied)
                         {
-                            Function.Call(Hash.CLEAR_FACIAL_IDLE_ANIM_OVERRIDE, ped);
+                            StopMouthAnimation(ped);
                             applied = false;
+                            refreshUtc = DateTime.MinValue;
                         }
                         RequestFacialDictionary(nowUtc);
                         return;
                     }
 
-                    // Re-applied periodically: the idle override fades, and a
-                    // jaw that freezes mid-sentence looks worse than none. It is
-                    // applied twice because the ped's own facial idle can
-                    // consume the first one.
                     if (!applied || nowUtc >= refreshUtc)
                     {
-                        Function.Call(Hash.SET_FACIAL_IDLE_ANIM_OVERRIDE, ped, TalkingAnim, FacialDictionary);
-                        Function.Call(Hash.SET_FACIAL_IDLE_ANIM_OVERRIDE, ped, TalkingAnim, FacialDictionary);
+                        Function.Call(Hash.PLAY_FACIAL_ANIM, ped, TalkingAnim, FacialDictionary);
                         refreshUtc = nowUtc.AddMilliseconds(600);
                     }
                     applied = true;
                 }
                 else if (applied)
                 {
-                    Function.Call(Hash.CLEAR_FACIAL_IDLE_ANIM_OVERRIDE, ped);
+                    StopMouthAnimation(ped);
                     applied = false;
+                    refreshUtc = DateTime.MinValue;
                 }
             }
             catch (Exception ex)
@@ -209,10 +204,15 @@ namespace AnotherDay.Plugin.Game
             }
         }
 
+        private static void StopMouthAnimation(Ped ped)
+        {
+            Function.Call(Hash.CLEAR_FACIAL_IDLE_ANIM_OVERRIDE, ped);
+            Function.Call(Hash.STOP_ANIM_TASK, ped, FacialDictionary, TalkingAnim, 16f);
+        }
+
         /// <summary>
-        /// Streams the facial dictionary in the background. An override applied
-        /// to a dictionary that was never requested does nothing at all, which
-        /// is the difference between a talking face and a dead one.
+        /// Streams the facial dictionary in the background so the speaking clip
+        /// can start as soon as the first audio arrives.
         /// </summary>
         private void RequestFacialDictionary(DateTime nowUtc)
         {

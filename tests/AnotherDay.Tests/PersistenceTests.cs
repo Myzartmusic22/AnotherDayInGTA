@@ -168,6 +168,64 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
+        public async Task ReturningPolicePedRepairsPreviouslySavedCivilianIdentity()
+        {
+            await using var workspace = new TempWorkspace();
+            await using var db = new Database(workspace.Paths);
+            await db.InitializeAsync();
+            Assert.True(db.IsAvailable, db.LastError);
+
+            var observation = Observation("police-model|uniform|1", 5100);
+            var generator = new IdentityGenerator();
+            string npcId = IdentityGenerator.MakeNpcId(observation.Fingerprint);
+            NpcProfile stale = generator.Generate(observation, "Mission Row", "test", npcId);
+            await db.SaveProfileAsync(stale);
+
+            var registry = new NpcRegistry(db, generator, new EmotionEngine(), new VoiceEngine(db), workspace.Config);
+            observation.CategoryHint = NpcCategories.Police;
+            var request = new PedSnapshotRequest { Zone = "Mission Row" };
+            request.Peds.Add(observation);
+
+            PedSnapshotResponse response = await registry.ProcessSnapshotAsync(request, default);
+            NpcProfile repaired = await db.GetProfileAsync(npcId);
+
+            Assert.Equal(NpcCategories.Police, response.Bindings[0].Category);
+            Assert.Equal("police officer", response.Bindings[0].Occupation);
+            Assert.Equal(NpcCategories.Police, repaired.Category);
+            Assert.Equal("police officer", repaired.Occupation);
+            Assert.Contains("professional", repaired.Voice.Style);
+        }
+
+        [Fact]
+        public async Task ReturningCivilianPedRepairsPreviouslyGeneratedJobGuess()
+        {
+            await using var workspace = new TempWorkspace();
+            await using var db = new Database(workspace.Paths);
+            await db.InitializeAsync();
+            var observation = Observation("civilian-model|outfit|1", 5101);
+            observation.ModelName = "model_5101";
+            var generator = new IdentityGenerator();
+            string npcId = IdentityGenerator.MakeNpcId(observation.Fingerprint);
+            NpcProfile stale = generator.Generate(observation, "Strawberry", "test", npcId);
+            stale.Occupation = "barista";
+            stale.Background += " Works as a barista.";
+            await db.SaveProfileAsync(stale);
+
+            var registry = new NpcRegistry(db, generator, new EmotionEngine(), new VoiceEngine(db), workspace.Config);
+            observation.CategoryHint = NpcCategories.Civilian;
+            var request = new PedSnapshotRequest { Zone = "Strawberry" };
+            request.Peds.Add(observation);
+
+            PedSnapshotResponse response = await registry.ProcessSnapshotAsync(request, default);
+            NpcProfile repaired = await db.GetProfileAsync(npcId);
+
+            Assert.Equal("local resident", response.Bindings[0].Occupation);
+            Assert.Equal("local resident", repaired.Occupation);
+            Assert.DoesNotContain("Works as a barista", repaired.Background);
+            Assert.Contains("exact occupation is not established", repaired.Background);
+        }
+
+        [Fact]
         public async Task DuplicateMemoriesAreDetectable()
         {
             await using var workspace = new TempWorkspace();

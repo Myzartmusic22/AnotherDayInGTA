@@ -40,9 +40,9 @@ namespace AnotherDay.Shared
         public const string SessionEnded = "sessionEnded";
 
         /// <summary>
-        /// The service recognised a spoken farewell in the completed player turn.
-        /// The plugin lets the NPC's reply play out, then releases the
-        /// conversation through the same teardown as every other ending.
+        /// The service recognised a spoken farewell in either side's completed
+        /// turn. The plugin waits for the response audio to finish before
+        /// releasing the conversation.
         /// </summary>
         public const string Farewell = "farewell";
     }
@@ -84,6 +84,8 @@ namespace AnotherDay.Shared
         public bool NpcInVehicle { get; set; }
         public bool NpcIsDriver { get; set; }
         public string NpcVehicleModel { get; set; }
+        public bool NpcOnRoad { get; set; }
+        public bool NpcVehiclesNearby { get; set; }
 
         /// <summary>
         /// Sex of the actual model the player is looking at. The service validates

@@ -15,14 +15,18 @@ namespace AnotherDay.Plugin.Game
 
         public static void MarkCurrent()
         {
-            if (_threadId == 0) _threadId = Thread.CurrentThread.ManagedThreadId;
+            Interlocked.CompareExchange(ref _threadId, Thread.CurrentThread.ManagedThreadId, 0);
         }
 
         public static bool IsCurrent
         {
-            get { return _threadId == 0 || Thread.CurrentThread.ManagedThreadId == _threadId; }
+            get
+            {
+                int threadId = Volatile.Read(ref _threadId);
+                return threadId != 0 && Thread.CurrentThread.ManagedThreadId == threadId;
+            }
         }
 
-        public static int Id { get { return _threadId; } }
+        public static int Id { get { return Volatile.Read(ref _threadId); } }
     }
 }

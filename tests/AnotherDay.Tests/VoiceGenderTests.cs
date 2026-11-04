@@ -143,6 +143,46 @@ namespace AnotherDay.Tests
             Assert.Equal(first.VoiceId, again.VoiceId);
         }
 
+        [Fact]
+        public void ConfidentFemaleIdentityDoesNotGenerateLowPitchDirections()
+        {
+            NpcProfile profile = new IdentityGenerator().Generate(Female("female-confident"), "Vinewood", "1.0", "npc_f_confident");
+            profile.Personality.Confidence = 0.95f;
+            profile.Speech.Pitch = "low"; // Also covers profiles created by older builds.
+
+            string style = VoiceEngine.BuildStyle(profile, new EmotionState());
+
+            Assert.DoesNotContain("low pitch", style);
+            Assert.DoesNotContain("low and steady", style);
+            Assert.Contains("steady and assured", style);
+        }
+
+        [Fact]
+        public async Task StoredLowRegisterFemaleVoiceIsReassigned()
+        {
+            await using var workspace = new TempWorkspace();
+            await using var db = new Database(workspace.Paths);
+            await db.InitializeAsync();
+            NpcProfile profile = new IdentityGenerator().Generate(Female("female-low-register"), "Vinewood", "1.0", "npc_f_low");
+            profile.Speech.Pitch = "low";
+            await db.SaveVoiceAssignmentAsync(profile.NpcId, new VoiceAssignment
+            {
+                VoiceId = "Gacrux",
+                VoiceName = "Gacrux",
+                IsMale = false,
+                CatalogVersion = VoiceCatalog.Version
+            });
+
+            VoiceAssignment corrected = await new VoiceEngine(db).GetOrAssignAsync(profile, new EmotionState());
+            VoiceOption selected = Find(corrected.VoiceId);
+
+            Assert.NotNull(selected);
+            Assert.False(GeminiVoices.IsCompatible(corrected.VoiceId, true));
+            Assert.True(GeminiVoices.IsCompatible(corrected.VoiceId, false));
+            Assert.NotEqual("low", selected.Pitch);
+            Assert.DoesNotContain("low pitch", corrected.Style);
+        }
+
         private static VoiceOption Find(string voiceId)
         {
             foreach (VoiceOption voice in VoiceCatalog.All)

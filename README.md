@@ -125,20 +125,26 @@ reports how many bytes of native audio came back.
 
 | Key | Action |
 |---|---|
-| `P` (hold) | Push-to-talk: opens a conversation with the nearest NPC and streams your voice only while held |
-| release `P` | Your turn is finished; the NPC answers the whole sentence and the conversation stays open |
-| hold `P` again while they speak | Deliberate interruption: their audio stops and they listen |
-| `O` | End the conversation; the NPC goes back to its own behaviour |
+| `P` (press once) | Opens a conversation with the nearest NPC; after connection, speak naturally without holding the key |
+| silence after you speak | Ends your turn automatically; the NPC answers, then the microphone resumes listening |
+| hold `P` while they speak | Deliberate interruption: their audio stops and you can speak until you release `P` |
+| `O` | End the conversation immediately; the NPC goes back to its own behaviour |
+| say "goodbye", "take care", or "be safe" | The NPC gives a closing reply, then the conversation ends and they resume ambient behaviour |
 | `Alt+Shift+7` | Start a spoken social scene between the two nearest NPCs |
 | `Alt+Shift+6` | Toggle the status panel |
 
-There is no text chat any more: every conversation is spoken. `P` is a single
-key with no modifier because `Shift` is GTA V's sprint/weapon-wheel modifier;
-nothing else in Story Mode uses `P`. The other keys keep chords so they cannot
-collide with GTA V's own bindings (F8/F10 switch characters, F4 is
-RagePluginHook's console). Everything is rebindable in
-`<game>\scripts\AnotherDay.Plugin.json` (single key like `P`, or `Alt`/`Ctrl`/
-`Shift` plus a key).
+The microphone is forwarded only during your turn and pauses while the NPC's
+audio plays; it stops when the conversation ends. There is no text chat any
+more: every conversation is spoken. `P` is a single key with no modifier because
+`Shift` is GTA V's sprint/weapon-wheel modifier; nothing else in Story Mode uses
+`P`. The other keys keep chords so they cannot collide with GTA V's own bindings
+(F8/F10 switch characters, F4 is RagePluginHook's console). Everything is rebindable in
+`<game>\scripts\AnotherDay.Plugin.json` (a single key like `P`, or
+`Alt`/`Ctrl`/`Shift` plus a key).
+
+Ride requests currently receive dialogue only. Gemini Live returns transcripts
+but does not provide a structured, validated agreement and destination action,
+so this build does not board the player or drive an NPC vehicle based on speech.
 
 Voice settings in the same file:
 
@@ -147,7 +153,7 @@ Voice settings in the same file:
 | `micDevice` | Part of the recording device name, e.g. `Headset`. Empty = Windows default |
 | `bargeInThreshold` | Mic RMS that counts as talking over an NPC (default `0.02`) |
 | `conversationRangeMeters` | How close someone must be for `P` to reach them |
-| `hangupKey` | Ends a conversation (default `O`) — separate from push-to-talk so releasing `P` never hangs up |
+| `hangupKey` | Ends a conversation (default `O`) — separate from the talk key so releasing `P` never hangs up |
 | `volume` | Master output volume (distance attenuation is applied on top) |
 
 Keys, ranges, volume and density live in `<game>\scripts\AnotherDay.Plugin.json`.
@@ -172,7 +178,9 @@ usual (through `RagePluginHook.exe` if you want LSPDFR loaded as well), then:
    `LIVE <name> - listening`. The pedestrian turns to face you and a Gemini Live
    session opens with that person's voice and persona. Speak normally: the mic
    streams continuously, silence-ending VAD decides when your turn is over, and
-   the reply arrives as native audio through your speakers. `P` again stops.
+   the reply arrives as native audio through your speakers. Say a clear goodbye to
+   let their closing line finish and end naturally, or press `O` to end
+   immediately.
    The conversation stays open between questions: they hold their ground, keep
    facing you and wait while you think. Somebody in a car answers through the
    window and stays at the wheel. Nothing spoken is ever written on screen —
@@ -183,9 +191,11 @@ usual (through `RagePluginHook.exe` if you want LSPDFR loaded as well), then:
    immediately and the model hears you. Transcripts stay inside the service for
    memory and context; nothing is captioned on screen.
 
-A conversation ends when you press `P` again, walk past roughly 45 m, or when
-something genuinely dangerous happens (gunfire, a fight). Drifting apart, a
-passing siren or half a minute of thinking does not end it.
+A conversation ends when you say a clear goodbye, press `O`, walk past roughly
+45 m, or when something genuinely dangerous happens (gunfire, a fight). The
+NPC stays focused while either person is speaking, then listens for your next
+turn. Drifting apart, a passing siren or half a minute of thinking does not end
+it.
 
 ## Animation and vehicles
 
@@ -229,6 +239,17 @@ sex (verified against Gemini's published voice table). If a stored assignment no
 longer fits - written when the catalog had a wrong gender, for example - it is
 replaced with a compatible one; memories, relationships and personality are
 untouched.
+
+NPC work roles are only stated when the game provides a role signal (for example
+police, emergency services, a gang model, or a driver currently at the wheel).
+An ordinary civilian is not randomly told they are a barista, construction
+worker, or another specific job. Female characters are not given low-register
+voice directions or low-register catalog voices; old incompatible assignments
+are replaced without resetting their identity history. The game currently gives
+the service clothing variation IDs, not readable outfit descriptions, so the
+NPC is instructed not to invent details such as a vest or hard hat. Exact outfit
+recognition needs a model/clothing-description map that this build does not yet
+include.
 
 The voice path needs a working Gemini key; the HUD shows `Live voice unavailable`
 with the reason when it is missing or rejected.

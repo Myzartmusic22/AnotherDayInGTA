@@ -189,6 +189,13 @@ namespace AnotherDay.Tests
 
         [Theory]
         [InlineData("All right, you be safe.")]
+        [InlineData("Be safe.")]
+        [InlineData("You take care.")]
+        [InlineData("Take care of yourself.")]
+        [InlineData("Take care of yourself out there.")]
+        [InlineData("Stay safe out there.")]
+        [InlineData("I gotta run.")]
+        [InlineData("I need to get going.")]
         [InlineData("Talk to you later.")]
         [InlineData("I'm going to leave you alone.")]
         [InlineData("I gotta go.")]

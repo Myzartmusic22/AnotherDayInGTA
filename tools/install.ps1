@@ -147,6 +147,6 @@ try {
 Write-Host ""
 Write-Host "Installation complete." -ForegroundColor Green
 Write-Host "  1. Launch GTA V Legacy (Story Mode)."
-Write-Host "  2. Press P near a pedestrian: the conversation and the microphone start on that press. Hold P to speak, release to let them answer, O to end. Alt+Shift+7 starts a social scene."
+Write-Host "  2. Press P once near a pedestrian and speak naturally after connection. Hold P during an NPC reply to interrupt; O ends the conversation. Alt+Shift+7 starts a social scene."
 Write-Host "  3. Set a Gemini key with:  `"$serviceDir\AnotherDay.Service.exe`" --set-key"
 Write-Host "  4. Logs: $DataDir\logs   Database: $DataDir\anotherday.db"

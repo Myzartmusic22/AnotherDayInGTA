@@ -67,11 +67,10 @@ namespace AnotherDay.Service.Live
         public event Action<string> Closed;
 
         /// <summary>
-        /// Raised once, after a completed player turn that was a goodbye. The
-        /// session stays open so the NPC's short farewell can actually be heard;
-        /// the plugin releases everything after that audio drains.
+        /// Raised once, after either speaker completes a farewell turn. The
+        /// plugin releases the conversation after the closing audio drains.
         /// </summary>
-        public event Action Farewell;
+        public event Action<string> Farewell;
 
         public async Task StartAsync(CancellationToken ct)
         {
@@ -92,18 +91,55 @@ namespace AnotherDay.Service.Live
             client.Interrupted += () => Interrupted?.Invoke();
             client.InputTranscript += text =>
             {
-                lock (_sync) _playerTurn.Append(text);
+                lock (_sync)
+                {
+                    AppendTranscriptFragment(_playerTurn, text);
+                    if (!string.IsNullOrWhiteSpace(text)) _farewellRaised = false;
+                }
                 Transcript?.Invoke("player", text);
             };
             client.OutputTranscript += text =>
             {
-                lock (_sync) _npcTurn.Append(text);
+                lock (_sync) AppendTranscriptFragment(_npcTurn, text);
                 Transcript?.Invoke("npc", text);
             };
             client.TurnComplete += CommitTurn;
             client.Warning += message => LastError = message;
             client.GoAway += timeLeft => { _ = ReconnectAsync("session limit reached"); };
             client.Closed += reason => { _ = ReconnectAsync(reason); };
+        }
+
+        private static void AppendTranscriptFragment(StringBuilder transcript, string fragment)
+        {
+            if (string.IsNullOrWhiteSpace(fragment)) return;
+            string text = fragment.Trim();
+            if (text.Length == 0) return;
+            if (transcript.Length == 0)
+            {
+                transcript.Append(text);
+                return;
+            }
+
+            string current = transcript.ToString();
+            int overlapLimit = Math.Min(80, Math.Min(current.Length, text.Length));
+            int overlap = 0;
+            for (int length = overlapLimit; length > 0; length--)
+            {
+                if (string.Compare(current, current.Length - length, text, 0, length,
+                    StringComparison.OrdinalIgnoreCase) == 0)
+                {
+                    overlap = length;
+                    break;
+                }
+            }
+
+            if (overlap == text.Length) return;
+
+            char previous = transcript[transcript.Length - 1];
+            char next = text[overlap];
+            if (overlap == 0 && char.IsLetterOrDigit(previous) && char.IsLetterOrDigit(next))
+                transcript.Append(' ');
+            transcript.Append(text, overlap, text.Length - overlap);
         }
 
         private void CommitTurn()
@@ -121,11 +157,14 @@ namespace AnotherDay.Service.Live
             if (player.Length == 0 && npc.Length == 0) return;
             TurnCommitted?.Invoke(player, npc);
 
-            if (!_farewellRaised && FarewellDetector.IsFarewell(player))
+            bool playerFarewell = FarewellDetector.IsFarewell(player);
+            bool npcFarewell = FarewellDetector.IsFarewell(npc);
+            if (!_farewellRaised && (playerFarewell || npcFarewell))
             {
                 _farewellRaised = true;
-                Log.Info("Player said goodbye to " + DisplayName + "; letting the farewell play out.");
-                Farewell?.Invoke();
+                Log.Info((playerFarewell ? "Player" : "NPC") + " said goodbye to " + DisplayName +
+                    "; letting the farewell play out.");
+                Farewell?.Invoke(playerFarewell ? "player" : "npc");
             }
         }
 

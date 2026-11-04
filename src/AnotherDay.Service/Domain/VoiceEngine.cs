@@ -39,7 +39,7 @@ namespace AnotherDay.Service.Domain
                 VoiceAssignment cached;
                 if (_cache.TryGetValue(profile.NpcId, out cached))
                 {
-                    if (IsCompatible(cached, profile.IsMale))
+                    if (IsSuitable(cached, profile))
                     {
                         cached.Style = BuildStyle(profile, emotion);
                         return cached;
@@ -51,7 +51,7 @@ namespace AnotherDay.Service.Domain
             VoiceAssignment existing = await _db.GetVoiceAssignmentAsync(profile.NpcId).ConfigureAwait(false);
             if (existing != null)
             {
-                if (IsCompatible(existing, profile.IsMale))
+                if (IsSuitable(existing, profile))
                 {
                     existing.Style = BuildStyle(profile, emotion);
                     existing.IsMale = profile.IsMale;
@@ -88,6 +88,29 @@ namespace AnotherDay.Service.Domain
             return assignment != null && GeminiVoices.IsCompatible(assignment.VoiceId, isMale);
         }
 
+        private static bool IsSuitable(VoiceAssignment assignment, NpcProfile profile)
+        {
+            if (assignment == null || profile == null || !IsCompatible(assignment, profile.IsMale))
+                return false;
+            VoiceOption option = VoiceCatalog.All.FirstOrDefault(v =>
+                string.Equals(v.VoiceId, assignment.VoiceId, StringComparison.OrdinalIgnoreCase));
+            return profile.IsMale || option == null ||
+                !string.Equals(option.Pitch, "low", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSuitable(VoiceOption option, NpcProfile profile)
+        {
+            if (option == null || profile == null ||
+                !GeminiVoices.IsCompatible(option.VoiceId, profile.IsMale))
+                return false;
+            if (profile.IsMale) return true;
+
+            VoiceOption canonical = VoiceCatalog.All.FirstOrDefault(v =>
+                string.Equals(v.VoiceId, option.VoiceId, StringComparison.OrdinalIgnoreCase));
+            return canonical == null ||
+                !string.Equals(canonical.Pitch, "low", StringComparison.OrdinalIgnoreCase);
+        }
+
         private async Task<VoiceAssignment> AssignAsync(NpcProfile profile, EmotionState emotion, string reason)
         {
             List<VoiceOption> catalog = await _db.GetVoiceCatalogAsync().ConfigureAwait(false);
@@ -98,10 +121,10 @@ namespace AnotherDay.Service.Domain
             // row is only used for description and pitch; a stale gender column
             // must never decide who sounds like a man.
             List<VoiceOption> candidates = catalog
-                .Where(v => !v.IsFallback && GeminiVoices.IsCompatible(v.VoiceId, profile.IsMale))
+                .Where(v => !v.IsFallback && IsSuitable(v, profile))
                 .ToList();
             if (candidates.Count == 0)
-                candidates = catalog.Where(v => GeminiVoices.IsCompatible(v.VoiceId, profile.IsMale)).ToList();
+                candidates = catalog.Where(v => IsSuitable(v, profile)).ToList();
             if (candidates.Count == 0)
             {
                 // Should be impossible with the built-in catalog, but a fallback
@@ -155,11 +178,14 @@ namespace AnotherDay.Service.Domain
 
         public static string BuildStyle(NpcProfile profile, EmotionState emotion)
         {
-            var traits = profile.Personality;
+            if (profile == null) return "sound natural";
+
+            var traits = profile.Personality ?? new PersonalityTraits();
             var parts = new List<string>();
             parts.Add(emotion != null ? emotion.ToneInstruction() : "sound natural");
+            parts.Add(RoleStyle(profile.Category));
 
-            if (traits.Confidence > 0.7f) parts.Add("low and steady");
+            if (traits.Confidence > 0.7f) parts.Add("steady and assured");
             else if (traits.Confidence < 0.3f) parts.Add("quiet and hesitant");
 
             if (traits.Aggression > 0.65f) parts.Add("with a hard edge");
@@ -170,17 +196,56 @@ namespace AnotherDay.Service.Domain
             {
                 if (profile.Speech.Pace == "slow") parts.Add("slow, deliberate pacing");
                 else if (profile.Speech.Pace == "quick" || profile.Speech.Pace == "rapid") parts.Add("quick pacing");
-                if (profile.Speech.Pitch == "low") parts.Add("low pitch");
-                if (profile.Speech.Accent != null && profile.Speech.Accent != "neutral Los Santos")
-                    parts.Add("faint " + profile.Speech.Accent + " inflection");
+                if (profile.Speech.Pitch == "low" && profile.IsMale) parts.Add("low pitch");
+                if (profile.Speech.SentenceLength == "short") parts.Add("short, natural sentences");
             }
 
-            if (profile.Category == NpcCategories.Police) parts.Add("professional, controlled");
-            if (profile.Category == NpcCategories.Gang) parts.Add("streetwise");
-            if (profile.Category == NpcCategories.Paramedic || profile.Category == NpcCategories.Firefighter)
-                parts.Add("tired but clear");
+            string accent = AccentForArea(profile.Neighborhood);
+            if (accent != "neutral Los Santos") parts.Add(accent);
 
             return string.Join(", ", parts.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct());
+        }
+
+        /// <summary>
+        /// Regional speech is grounded in the character's recorded location,
+        /// never inferred from race, appearance, or a generated name.
+        /// </summary>
+        public static string AccentForArea(string area)
+        {
+            string normalized = (area ?? "").ToLowerInvariant();
+            if (normalized.Contains("sandy shores") || normalized.Contains("grapeseed") ||
+                normalized.Contains("paleto bay") || normalized.Contains("grand senora") ||
+                normalized.Contains("blaine county") || normalized.Contains("harmony"))
+                return "subtle rural county drawl";
+
+            return "neutral Los Santos";
+        }
+
+        private static string RoleStyle(string category)
+        {
+            switch (category)
+            {
+                case NpcCategories.Police:
+                    return "professional, clipped, and controlled";
+                case NpcCategories.Gang:
+                    return "guarded, casual, streetwise vocabulary; use slang sparingly and only when it fits";
+                case NpcCategories.Business:
+                    return "polished, measured, professional vocabulary";
+                case NpcCategories.Driver:
+                    return "practical, roadwise, conversational";
+                case NpcCategories.Mechanic:
+                    return "direct, practical, blue-collar vocabulary";
+                case NpcCategories.Paramedic:
+                case NpcCategories.Firefighter:
+                    return "calm, clear, and practical";
+                case NpcCategories.Shopkeeper:
+                case NpcCategories.Employee:
+                    return "grounded, approachable, conversational";
+                case NpcCategories.Security:
+                    return "alert, concise, and professional";
+                default:
+                    return "natural, individual, and conversational";
+            }
         }
 
         public static string BuildFallbackStyle(NpcProfile profile, EmotionState emotion)
@@ -193,6 +258,8 @@ namespace AnotherDay.Service.Domain
             int penalty = 0;
             if (profile.Speech == null) return penalty;
             string pitch = profile.Speech.Pitch ?? "medium";
+            if (!profile.IsMale && string.Equals(pitch, "low", StringComparison.OrdinalIgnoreCase))
+                pitch = "medium";
             if (!string.IsNullOrEmpty(voice.Pitch) && !string.Equals(voice.Pitch, pitch, StringComparison.OrdinalIgnoreCase)) penalty++;
             if (profile.Personality.Confidence > 0.7f && voice.Pitch == "high") penalty++;
             if (profile.Personality.Sociability > 0.7f && voice.Energy < 0.4f) penalty++;

@@ -93,7 +93,6 @@ namespace AnotherDay.Service.Domain
         private static readonly string[] QuirksPool =
         {
             "taps a coin against their knuckles when thinking",
-            "repeats the last word of a sentence under their breath",
             "always mentions the weather before getting to the point",
             "laughs at their own jokes before finishing them",
             "calls everyone 'boss'",
@@ -116,20 +115,20 @@ namespace AnotherDay.Service.Domain
 
         private static readonly Dictionary<string, string[]> Occupations = new Dictionary<string, string[]>
         {
-            [NpcCategories.Civilian] = new[] { "warehouse worker", "delivery driver", "construction laborer", "barista", "retail clerk", "security guard", "busboy", "line cook", "janitor", "unemployed", "student", "parking attendant" },
-            [NpcCategories.Police] = new[] { "patrol officer", "traffic officer", "detective", "gang unit officer", "transit officer", "sheriff's deputy" },
-            [NpcCategories.Gang] = new[] { "gang member", "gang lookout", "street dealer", "gang enforcer", "getaway driver", "gang recruiter" },
-            [NpcCategories.Shopkeeper] = new[] { "convenience store owner", "liquor store owner", "pawn shop owner", "tattoo shop owner", "restaurant owner", "barber" },
-            [NpcCategories.Business] = new[] { "real estate agent", "car dealer", "nightclub manager", "contractor", "import exporter", "property manager" },
-            [NpcCategories.Employee] = new[] { "store employee", "hotel clerk", "valet", "waiter", "cashier", "stock clerk", "call center worker" },
-            [NpcCategories.Driver] = new[] { "taxi driver", "rideshare driver", "truck driver", "courier", "limo driver" },
-            [NpcCategories.Passenger] = new[] { "commuter", "tourist", "student", "office worker" },
-            [NpcCategories.Security] = new[] { "private security guard", "night watchman", "bodyguard", "mall security" },
-            [NpcCategories.Paramedic] = new[] { "paramedic", "emergency medical technician", "hospital orderly" },
-            [NpcCategories.Firefighter] = new[] { "firefighter", "fire inspector", "wildland firefighter" },
-            [NpcCategories.Mechanic] = new[] { "auto mechanic", "tow truck driver", "body shop worker", "tire technician" },
-            [NpcCategories.Homeless] = new[] { "unhoused resident", "panhandler", "transient laborer", "scrap collector" },
-            [NpcCategories.Other] = new[] { "street performer", "artist", "musician", "unknown" }
+            [NpcCategories.Civilian] = new[] { "local resident" },
+            [NpcCategories.Police] = new[] { "police officer" },
+            [NpcCategories.Gang] = new[] { "gang member" },
+            [NpcCategories.Shopkeeper] = new[] { "shopkeeper" },
+            [NpcCategories.Business] = new[] { "business professional" },
+            [NpcCategories.Employee] = new[] { "employee" },
+            [NpcCategories.Driver] = new[] { "driver" },
+            [NpcCategories.Passenger] = new[] { "passenger" },
+            [NpcCategories.Security] = new[] { "security guard" },
+            [NpcCategories.Paramedic] = new[] { "paramedic" },
+            [NpcCategories.Firefighter] = new[] { "firefighter" },
+            [NpcCategories.Mechanic] = new[] { "mechanic" },
+            [NpcCategories.Homeless] = new[] { "local resident" },
+            [NpcCategories.Other] = new[] { "local resident" }
         };
 
         private static readonly Dictionary<string, string> CategoryBackground = new Dictionary<string, string>
@@ -163,7 +162,8 @@ namespace AnotherDay.Service.Domain
 
             string name = Pick(rng, ped.IsMale ? MaleFirst : FemaleFirst) + " " + Pick(rng, LastNames);
             var personality = GeneratePersonality(rng, category);
-            var speech = GenerateSpeech(rng, category, ped.IsMale, personality);
+            string speechArea = string.IsNullOrWhiteSpace(zone) ? neighborhood : zone;
+            var speech = GenerateSpeech(rng, category, ped.IsMale, personality, speechArea);
             var interests = PickMany(rng, InterestsPool, 3).ToList();
             var beliefs = PickMany(rng, BeliefsPool, 3).ToList();
             var quirks = PickMany(rng, QuirksPool, rng.Next(1, 3)).ToList();
@@ -211,8 +211,8 @@ namespace AnotherDay.Service.Domain
             if (model.Contains("security") || model.Contains("guard")) return NpcCategories.Security;
             if (model.Contains("g_m_") || model.Contains("g_f_") || model.Contains("gang") || model.Contains("ballas") ||
                 model.Contains("vagos") || model.Contains("families") || model.Contains("lost") ||
-                model.Contains("azteca") || model.Contains("triad") || model.Contains("korean") ||
-                model.Contains("cartel") || model.Contains("salvador") || model.Contains("russian"))
+                model.Contains("azteca") || model.Contains("triad") || model.Contains("cartel") ||
+                model.Contains("salvador"))
                 return NpcCategories.Gang;
             if (model.Contains("shop") || model.Contains("clerk") || model.Contains("business") ||
                 model.Contains("banker") || model.Contains("trader") || model.Contains("owner"))
@@ -275,30 +275,52 @@ namespace AnotherDay.Service.Domain
             return p;
         }
 
-        private SpeechStyle GenerateSpeech(StableRandom rng, string category, bool male, PersonalityTraits p)
+        private SpeechStyle GenerateSpeech(StableRandom rng, string category, bool male, PersonalityTraits p,
+            string area)
         {
-            var accents = new[] { "neutral Los Santos", "Chicano-influenced", "Southern drawl", "East Coast clipped", "Valley casual", "British expat", "Latino", "African-American vernacular", "Korean-American", "Middle Eastern", "Eastern European" };
             var paces = new[] { "slow", "measured", "normal", "quick", "rapid" };
-            var vocab = new[] { "plain", "everyday", "streetwise", "formal", "blue-collar", "conspiratorial", "technical" };
-            var profanity = new[] { "none", "rare", "occasional", "frequent", "constant" };
-            var tics = new[] { "", "", "", "you know what I mean", "look", "honestly", "I'm telling you", "whatever", "man", "bro", "sweetheart", "boss" };
+            string pace = paces[rng.Next(paces.Length)];
+            string vocabulary = "everyday";
+            string profanityLevel = "occasional";
 
-            string pace = male ? paces[rng.Next(paces.Length)] : paces[rng.Next(paces.Length)];
-            string vocabulary = vocab[rng.Next(vocab.Length)];
-            string profanityLevel = profanity[rng.Next(profanity.Length)];
-            if (p.Sociability > 0.7f) pace = "quick";
-            if (category == NpcCategories.Police) { vocabulary = "clipped official"; profanityLevel = "rare"; pace = "measured"; }
-            if (category == NpcCategories.Gang) { vocabulary = "streetwise"; profanityLevel = profanity[rng.Next(2, profanity.Length)]; }
-            if (category == NpcCategories.Business) vocabulary = "polished professional";
+            switch (category)
+            {
+                case NpcCategories.Police:
+                    vocabulary = "clipped official";
+                    profanityLevel = "rare";
+                    pace = "measured";
+                    break;
+                case NpcCategories.Gang:
+                    vocabulary = "streetwise";
+                    profanityLevel = "occasional";
+                    break;
+                case NpcCategories.Business:
+                    vocabulary = "polished professional";
+                    profanityLevel = "rare";
+                    break;
+                case NpcCategories.Driver:
+                case NpcCategories.Mechanic:
+                    vocabulary = "practical and direct";
+                    break;
+                case NpcCategories.Paramedic:
+                case NpcCategories.Firefighter:
+                    vocabulary = "clear and practical";
+                    profanityLevel = "rare";
+                    break;
+            }
+
+            if (p.Sociability > 0.7f && category != NpcCategories.Police) pace = "quick";
 
             return new SpeechStyle
             {
-                Accent = accents[rng.Next(accents.Length)],
+                Accent = VoiceEngine.AccentForArea(area),
                 Pace = pace,
-                Pitch = p.Confidence > 0.7f ? "low" : (male ? "medium" : "high"),
+                Pitch = male
+                    ? (p.Confidence > 0.7f ? "low" : "medium")
+                    : (p.Confidence > 0.7f ? "medium" : "high"),
                 Vocabulary = vocabulary,
                 Profanity = profanityLevel,
-                VerbalTic = tics[rng.Next(tics.Length)],
+                VerbalTic = "",
                 SentenceLength = p.Intelligence > 0.7f ? "varied" : (rng.NextDouble() < 0.5 ? "short" : "medium")
             };
         }
@@ -314,7 +336,13 @@ namespace AnotherDay.Service.Domain
                 "Commutes into " + neighborhood + " every day and would rather be somewhere quieter.",
                 "Knows " + neighborhood + " well enough to avoid the wrong streets at night."
             };
-            return baseText + " " + hooks[rng.Next(hooks.Length)] + " Works as a " + occupation + ".";
+            string background = baseText + " " + hooks[rng.Next(hooks.Length)];
+            if (!string.Equals(occupation, "local resident", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(occupation, "passenger", StringComparison.OrdinalIgnoreCase))
+                background += " Their observed role is " + occupation + ".";
+            else
+                background += " Their exact occupation is not established.";
+            return background;
         }
 
         private static string Pick(StableRandom rng, string[] values) => values[rng.Next(values.Length)];
@@ -344,6 +372,106 @@ namespace AnotherDay.Service.Domain
         {
             byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint ?? Guid.NewGuid().ToString("N")));
             return "npc_" + Convert.ToHexString(hash).Substring(0, 12).ToLowerInvariant();
+        }
+    }
+
+    public static class NpcRolePolicy
+    {
+        private const string PoliceOccupation = "police officer";
+        private const string PoliceBackground =
+            "Works long shifts and has seen the city change. Believes the job is thankless but necessary, and is wary of people who act too friendly too fast.";
+        private static readonly Dictionary<string, HashSet<string>> PreviouslyGeneratedJobs =
+            new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                [NpcCategories.Civilian] = JobSet(
+                    "warehouse worker", "delivery driver", "construction laborer", "barista", "retail clerk",
+                    "security guard", "busboy", "line cook", "janitor", "unemployed", "student", "parking attendant"),
+                [NpcCategories.Gang] = JobSet(
+                    "gang lookout", "street dealer", "gang enforcer", "getaway driver", "gang recruiter"),
+                [NpcCategories.Shopkeeper] = JobSet(
+                    "convenience store owner", "liquor store owner", "pawn shop owner", "tattoo shop owner",
+                    "restaurant owner", "barber"),
+                [NpcCategories.Business] = JobSet(
+                    "real estate agent", "car dealer", "nightclub manager", "contractor", "import exporter",
+                    "property manager"),
+                [NpcCategories.Employee] = JobSet(
+                    "store employee", "hotel clerk", "valet", "waiter", "cashier", "stock clerk",
+                    "call center worker"),
+                [NpcCategories.Driver] = JobSet("taxi driver", "rideshare driver", "truck driver", "courier", "limo driver"),
+                [NpcCategories.Passenger] = JobSet("commuter", "tourist", "student", "office worker"),
+                [NpcCategories.Security] = JobSet("private security guard", "night watchman", "bodyguard", "mall security"),
+                [NpcCategories.Paramedic] = JobSet("emergency medical technician", "hospital orderly"),
+                [NpcCategories.Firefighter] = JobSet("fire inspector", "wildland firefighter"),
+                [NpcCategories.Mechanic] = JobSet("auto mechanic", "tow truck driver", "body shop worker", "tire technician"),
+                [NpcCategories.Homeless] = JobSet("panhandler", "transient laborer", "scrap collector"),
+                [NpcCategories.Other] = JobSet("street performer", "artist", "musician", "unknown")
+            };
+
+        public static bool ReconcileObservedRole(NpcProfile profile, string observedCategory)
+        {
+            if (profile == null) return false;
+
+            if (string.Equals(observedCategory, profile.Category, StringComparison.OrdinalIgnoreCase) &&
+                PreviouslyGeneratedJobs.TryGetValue(observedCategory ?? "", out HashSet<string> oldJobs) &&
+                oldJobs.Contains(profile.Occupation ?? ""))
+            {
+                profile.Occupation = CanonicalOccupation(observedCategory);
+                profile.Background = RemoveGeneratedJobClaim(profile.Background);
+                return true;
+            }
+
+            if (!string.Equals(observedCategory, NpcCategories.Police, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string occupation = profile.Occupation ?? "";
+            bool occupationMatches =
+                occupation.IndexOf("police", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                occupation.IndexOf("officer", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                occupation.IndexOf("detective", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                occupation.IndexOf("deputy", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                occupation.IndexOf("sheriff", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (string.Equals(profile.Category, NpcCategories.Police, StringComparison.OrdinalIgnoreCase) &&
+                occupationMatches)
+                return false;
+
+            profile.Category = NpcCategories.Police;
+            profile.Occupation = PoliceOccupation;
+            profile.Background = PoliceBackground;
+            return true;
+        }
+
+        private static HashSet<string> JobSet(params string[] values)
+        {
+            return new HashSet<string>(values, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string CanonicalOccupation(string category)
+        {
+            switch (category)
+            {
+                case NpcCategories.Gang: return "gang member";
+                case NpcCategories.Shopkeeper: return "shopkeeper";
+                case NpcCategories.Business: return "business professional";
+                case NpcCategories.Employee: return "employee";
+                case NpcCategories.Driver: return "driver";
+                case NpcCategories.Passenger: return "passenger";
+                case NpcCategories.Security: return "security guard";
+                case NpcCategories.Paramedic: return "paramedic";
+                case NpcCategories.Firefighter: return "firefighter";
+                case NpcCategories.Mechanic: return "mechanic";
+                default: return "local resident";
+            }
+        }
+
+        private static string RemoveGeneratedJobClaim(string background)
+        {
+            if (string.IsNullOrWhiteSpace(background)) return "Their exact occupation is not established.";
+
+            int claim = background.LastIndexOf(" Works as a ", StringComparison.OrdinalIgnoreCase);
+            if (claim >= 0)
+                background = background.Substring(0, claim);
+            return background.TrimEnd() + " Their exact occupation is not established.";
         }
     }
 

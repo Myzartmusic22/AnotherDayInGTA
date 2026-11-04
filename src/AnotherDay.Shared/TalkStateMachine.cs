@@ -12,10 +12,10 @@ namespace AnotherDay.Shared
     /// The conversation is started by the press itself:
     ///
     ///   Idle --press--> Connecting --ready--> Listening --speech+silence--> AwaitingReply
-    ///                                |                \--release w/ speech--> AwaitingReply
-    ///                                \--no speech, window closed--> Open --press--> Holding
-    ///   Open/AwaitingReply --press--> Holding --release w/ speech--> AwaitingReply
-    ///                                           \--release silent--> Open
+    ///                                               ^                          |
+    ///                                               |---- reply complete ------|
+    ///   AwaitingReply --press--> Holding --release with speech--> AwaitingReply
+    ///                                      \--release silent--> Listening
     ///
     /// No native call and no clock lives here, so every transition is testable
     /// without a game process.
@@ -26,11 +26,11 @@ namespace AnotherDay.Shared
         Idle,
         /// <summary>A press asked for a conversation; the voice session is opening.</summary>
         Connecting,
-        /// <summary>The first listening window: the microphone is open without another press.</summary>
+        /// <summary>The conversation microphone is open unless the NPC is speaking.</summary>
         Listening,
-        /// <summary>Push-to-talk is held in an established conversation.</summary>
+        /// <summary>The player is deliberately interrupting an NPC response.</summary>
         Holding,
-        /// <summary>Conversation established, microphone closed until the next press.</summary>
+        /// <summary>Reserved for an established conversation with listening intentionally paused.</summary>
         Open,
         /// <summary>A turn was submitted; the NPC has the floor.</summary>
         AwaitingReply
@@ -48,18 +48,14 @@ namespace AnotherDay.Shared
     }
 
     /// <summary>
-    /// The whole interaction contract for one key: first press starts the
-    /// conversation and opens the microphone, later presses are push-to-talk,
-    /// and the microphone is submitted on release or shortly after the player
-    /// stops talking so a tap cannot leave a turn hanging.
+    /// The whole interaction contract for one key: the first press starts an
+    /// open-mic conversation, speech ends automatically after silence, and the
+    /// key can still be used to interrupt an NPC response.
     /// </summary>
     public sealed class TalkStateMachine
     {
         /// <summary>Silence after real speech that finishes the automatically opened turn.</summary>
         public const double SilenceSubmitSeconds = 1.1;
-
-        /// <summary>How long the first press keeps the microphone open when nothing is said.</summary>
-        public const double ListenWindowSeconds = 20.0;
 
         public TalkPhase Phase { get; private set; } = TalkPhase.Idle;
 
@@ -70,7 +66,6 @@ namespace AnotherDay.Shared
 
         private bool _speech;
         private DateTime? _lastSpeechUtc;
-        private DateTime _listenOpenedUtc;
 
         public TalkAction Press(DateTime now)
         {
@@ -100,13 +95,13 @@ namespace AnotherDay.Shared
 
         public TalkAction Release(DateTime now)
         {
-            if (Phase != TalkPhase.Holding && Phase != TalkPhase.Listening) return TalkAction.None;
+            if (Phase != TalkPhase.Holding) return TalkAction.None;
 
-            // A silent tap is not a sentence. Submitting it would ask Gemini to
-            // answer nothing; the conversation simply stays open for the next one.
+            // A silent interruption is not a sentence. Resume hands-free
+            // listening instead of submitting an empty turn or closing the mic.
             if (!_speech)
             {
-                Phase = TalkPhase.Open;
+                Phase = TalkPhase.Listening;
                 return TalkAction.None;
             }
 
@@ -114,8 +109,8 @@ namespace AnotherDay.Shared
         }
 
         /// <summary>
-        /// The voice session answered. The first listening window opens here, so
-        /// a press that was released during a slow handshake still gets heard.
+        /// The voice session answered. Hands-free listening opens here, so a
+        /// press released during a slow handshake still starts the conversation.
         /// </summary>
         public TalkAction Ready(DateTime now)
         {
@@ -123,7 +118,6 @@ namespace AnotherDay.Shared
 
             Phase = TalkPhase.Listening;
             ClearSpeech();
-            _listenOpenedUtc = now;
             return TalkAction.None;
         }
 
@@ -143,9 +137,8 @@ namespace AnotherDay.Shared
         }
 
         /// <summary>
-        /// Clock. Ends the automatic first turn once the player has stopped
-        /// talking, and closes an unused listening window so the microphone is
-        /// not left open indefinitely.
+        /// Clock. Ends the current turn once the player has stopped talking.
+        /// The microphone stays open for the life of the conversation.
         /// </summary>
         public TalkAction Tick(DateTime now)
         {
@@ -157,19 +150,15 @@ namespace AnotherDay.Shared
                 return TalkAction.None;
             }
 
-            if ((now - _listenOpenedUtc).TotalSeconds >= ListenWindowSeconds)
-            {
-                Phase = TalkPhase.Open;
-                return TalkAction.None;
-            }
-
             return TalkAction.None;
         }
 
-        /// <summary>The NPC's reply has finished playing; the microphone is closed until asked for.</summary>
+        /// <summary>The NPC's reply has finished playing; resume hands-free listening.</summary>
         public void ReplyFinished()
         {
-            if (Phase == TalkPhase.AwaitingReply) Phase = TalkPhase.Open;
+            if (Phase != TalkPhase.AwaitingReply) return;
+            ClearSpeech();
+            Phase = TalkPhase.Listening;
         }
 
         /// <summary>The conversation ended or was torn down for any reason.</summary>

@@ -39,15 +39,16 @@ namespace AnotherDay.Plugin.Game
         /// <summary>Re-issued at half the task length so it never runs out.</summary>
         internal const int StandStillRefreshSeconds = 4;
 
-        internal const int LookMilliseconds = 4000;
-        internal const int LookRefreshSeconds = 2;
+        internal const int LookMilliseconds = 2000;
+        internal const double LookRefreshSeconds = 1;
+        internal const int LookFlags = 2048;
 
-        /// <summary>The turn itself is short; only its trigger is throttled.</summary>
+        /// <summary>The turn gets time to finish before a stalled turn is retried.</summary>
         internal const int TurnMilliseconds = 2500;
-        internal const int TurnRefreshSeconds = 1;
+        internal const int TurnRefreshSeconds = 3;
 
         /// <summary>Wider than the look cone: beyond this the body is turned.</summary>
-        internal const float FacingToleranceDegrees = 35f;
+        internal const float FacingToleranceDegrees = 25f;
 
         private Ped _ped;
         private int _handle;
@@ -144,7 +145,7 @@ namespace AnotherDay.Plugin.Game
         {
             if (now < _nextLookUtc) return;
             _nextLookUtc = now.AddSeconds(LookRefreshSeconds);
-            Function.Call(Hash.TASK_LOOK_AT_ENTITY, ped, player, LookMilliseconds, 0, 2);
+            Function.Call(Hash.TASK_LOOK_AT_ENTITY, ped, player, LookMilliseconds, LookFlags, 2);
         }
 
         /// <summary>

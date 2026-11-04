@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using AnotherDay.Service.Domain;
 using AnotherDay.Service.Live;
 using AnotherDay.Shared;
@@ -14,6 +15,173 @@ namespace AnotherDay.Tests
     public sealed class ConversationEngagementTests
     {
         private static readonly DateTime T0 = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        [Fact]
+        public void ConversationTargetPolicyLeavesRunningOrThreatenedPedsAlone()
+        {
+            Assert.True(ConversationTargetPolicy.CanStart(false, false, false, false));
+            Assert.False(ConversationTargetPolicy.CanStart(true, false, false, false));
+            Assert.False(ConversationTargetPolicy.CanStart(false, true, false, false));
+            Assert.False(ConversationTargetPolicy.CanStart(false, false, true, false));
+            Assert.False(ConversationTargetPolicy.CanStart(false, false, false, true));
+        }
+
+        [Fact]
+        public void GeneratedVoiceStyleUsesRoleAndPlaceNotDemographicAccentLabels()
+        {
+            var profile = new NpcProfile
+            {
+                Category = NpcCategories.Gang,
+                Neighborhood = "Sandy Shores",
+                Personality = new PersonalityTraits(),
+                Speech = new SpeechStyle
+                {
+                    Accent = "African-American vernacular",
+                    Vocabulary = "formal"
+                }
+            };
+
+            string style = VoiceEngine.BuildStyle(profile, new EmotionState());
+
+            Assert.Contains("streetwise", style);
+            Assert.Contains("rural county drawl", style);
+            Assert.DoesNotContain("African-American", style);
+            Assert.DoesNotContain("formal professional", style);
+        }
+
+        [Fact]
+        public void IdentityGenerationDoesNotAssignAccentsFromRace()
+        {
+            var generator = new IdentityGenerator();
+            var ped = new PedObservation
+            {
+                Fingerprint = "test-korean-civilian",
+                ModelName = "a_m_y_korean_01",
+                IsMale = true,
+                CategoryHint = NpcCategories.Civilian
+            };
+
+            NpcProfile profile = generator.Generate(ped, "Little Seoul", "test", "npc_test");
+
+            Assert.Equal(NpcCategories.Civilian, profile.Category);
+            Assert.Equal("neutral Los Santos", profile.Speech.Accent);
+        }
+
+        [Fact]
+        public void OrdinaryCivilianIsNotAssignedAnUnobservedJob()
+        {
+            var ped = new PedObservation
+            {
+                Fingerprint = "civilian-no-job-evidence",
+                ModelName = "model_12345",
+                IsMale = true,
+                CategoryHint = NpcCategories.Civilian
+            };
+
+            NpcProfile profile = new IdentityGenerator().Generate(ped, "Strawberry", "test", "npc_local");
+
+            Assert.Equal("local resident", profile.Occupation);
+            Assert.DoesNotContain("barista", profile.Background);
+            Assert.DoesNotContain("construction", profile.Background);
+            Assert.Contains("exact occupation is not established", profile.Background);
+        }
+
+        [Fact]
+        public void OldRandomCivilianJobIsReplacedByGroundedIdentity()
+        {
+            var profile = new NpcProfile
+            {
+                Category = NpcCategories.Civilian,
+                Occupation = "barista",
+                Background = "An ordinary resident. Works as a barista."
+            };
+
+            Assert.True(NpcRolePolicy.ReconcileObservedRole(profile, NpcCategories.Civilian));
+            Assert.Equal("local resident", profile.Occupation);
+            Assert.DoesNotContain("Works as a barista", profile.Background);
+            Assert.False(NpcRolePolicy.ReconcileObservedRole(profile, NpcCategories.Civilian));
+        }
+
+        [Fact]
+        public void GangArchetypeDoesNotInventASpecificGangJob()
+        {
+            var ped = new PedObservation
+            {
+                Fingerprint = "gang-model",
+                ModelName = "model_98765",
+                IsMale = true,
+                CategoryHint = NpcCategories.Gang
+            };
+
+            NpcProfile profile = new IdentityGenerator().Generate(ped, "Chamberlain Hills", "test", "npc_gang");
+
+            Assert.Equal(NpcCategories.Gang, profile.Category);
+            Assert.Equal("gang member", profile.Occupation);
+        }
+
+        [Fact]
+        public void OldSpecificGangJobIsReplacedWhenGangRoleIsObserved()
+        {
+            var profile = new NpcProfile
+            {
+                Category = NpcCategories.Gang,
+                Occupation = "street dealer",
+                Background = "A local gang member. Works as a street dealer."
+            };
+
+            Assert.True(NpcRolePolicy.ReconcileObservedRole(profile, NpcCategories.Gang));
+            Assert.Equal("gang member", profile.Occupation);
+            Assert.DoesNotContain("street dealer", profile.Background);
+        }
+
+        [Fact]
+        public void GenderedRoleIsNotInferredForAnOrdinaryDriver()
+        {
+            var ped = new PedObservation
+            {
+                Fingerprint = "generic-driver",
+                ModelName = "model_67890",
+                IsMale = true,
+                IsInVehicle = true,
+                VehicleSeat = -1,
+                CategoryHint = NpcCategories.Driver
+            };
+
+            NpcProfile profile = new IdentityGenerator().Generate(ped, "Downtown Los Santos", "test", "npc_driver");
+
+            Assert.Equal("driver", profile.Occupation);
+            Assert.DoesNotContain("taxi", profile.Occupation);
+            Assert.DoesNotContain("truck", profile.Occupation);
+        }
+
+        [Theory]
+        [InlineData(2, null)]
+        [InlineData(3, null)]
+        [InlineData(6, NpcCategories.Police)]
+        [InlineData(20, NpcCategories.Paramedic)]
+        [InlineData(21, NpcCategories.Firefighter)]
+        [InlineData(27, NpcCategories.Police)]
+        public void GamePedTypesMapToTheirDocumentedRoles(int pedType, string expectedCategory)
+        {
+            Assert.Equal(expectedCategory, NpcCategories.FromGamePedType(pedType));
+        }
+
+        [Fact]
+        public void ObservedPoliceRoleCorrectsStaleCivilianOccupation()
+        {
+            var profile = new NpcProfile
+            {
+                Category = NpcCategories.Civilian,
+                Occupation = "construction laborer",
+                Background = "An ordinary resident."
+            };
+
+            Assert.True(NpcRolePolicy.ReconcileObservedRole(profile, NpcCategories.Police));
+            Assert.Equal(NpcCategories.Police, profile.Category);
+            Assert.Equal("police officer", profile.Occupation);
+            Assert.Contains("long shifts", profile.Background);
+            Assert.False(NpcRolePolicy.ReconcileObservedRole(profile, NpcCategories.Police));
+        }
 
         private static EngagementState BeginOnFoot(double inactivitySeconds = 240, double leaveRadius = 45)
         {
@@ -88,6 +256,15 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
+        public void FarewellEndsOnlyAfterTheReplyAndItsAudioFinish()
+        {
+            Assert.False(ConversationLifecyclePolicy.ShouldFinishFarewell(false, true, false));
+            Assert.False(ConversationLifecyclePolicy.ShouldFinishFarewell(true, false, false));
+            Assert.False(ConversationLifecyclePolicy.ShouldFinishFarewell(true, true, true));
+            Assert.True(ConversationLifecyclePolicy.ShouldFinishFarewell(true, true, false));
+        }
+
+        [Fact]
         public void HoldsAnOnFootNpcInPlace()
         {
             EngagementState state = BeginOnFoot();
@@ -96,9 +273,10 @@ namespace AnotherDay.Tests
             Assert.False(first.Ends);
             Assert.Equal(EngagementHold.FacePlayer, first.Hold);
 
-            // The hold is re-issued on its own cadence rather than every tick.
+            // Attention is refreshed at sub-second cadence without restarting
+            // the body turn on every frame.
             Assert.Equal(EngagementHold.None, state.Evaluate(T0.AddMilliseconds(400), 2.0, true, true, false).Hold);
-            Assert.Equal(EngagementHold.FacePlayer, state.Evaluate(T0.AddSeconds(2), 2.0, true, true, false).Hold);
+            Assert.Equal(EngagementHold.FacePlayer, state.Evaluate(T0.AddSeconds(1), 2.0, true, true, false).Hold);
         }
 
         [Fact]
@@ -244,7 +422,8 @@ namespace AnotherDay.Tests
                 DisplayName = "Marisol Vega",
                 Age = 34,
                 Occupation = "barista",
-                PersonalityDescription = "Warm but busy, quick to joke with people she likes."
+                PersonalityDescription = "Warm but busy, quick to joke with people she likes.",
+                Quirks = new List<string> { "repeats the last word of a sentence under their breath" }
             };
 
             string persona = LivePersona.Build(profile, new EmotionState(), new Relationship(),
@@ -252,11 +431,28 @@ namespace AnotherDay.Tests
 
             Assert.Contains(DialogueLanguage.EnglishRule, persona);
             Assert.Contains("Stay with them", persona);
+            Assert.Contains("one brief natural farewell", persona);
+            Assert.Contains("If you genuinely want to end the conversation", persona);
             Assert.DoesNotContain("Answer in the language the player speaks", persona);
             Assert.Contains("Marisol Vega", persona);
+            Assert.Contains("do not echo or deliberately repeat the last word", persona);
 
             // Personality is preserved while the language is pinned.
             Assert.Contains("Warm but busy", persona);
+        }
+
+        [Fact]
+        public void LivePersonaIncludesRoadAndNearbyVehicleAwareness()
+        {
+            var profile = new NpcProfile { NpcId = "npc_marisol", DisplayName = "Marisol Vega" };
+
+            string persona = LivePersona.Build(profile, new EmotionState(), new Relationship(),
+                new MemoryItem[0], new ConversationTurn[0], "Strawberry", "clear", 14, false, false,
+                npcOnRoad: true, npcVehiclesNearby: true);
+
+            Assert.Contains("standing on a road", persona);
+            Assert.Contains("vehicles are nearby", persona);
+            Assert.Contains("Do not claim to have moved", persona);
         }
 
         [Fact]

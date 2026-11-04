@@ -39,10 +39,19 @@ namespace AnotherDay.Tests
         }
 
         [Fact]
-        public void QuietAudioDoesNotMoveTheMouth()
+        public void ShortQuietPhonemesKeepTheMouthAnimationActive()
         {
             ConversationAnimationState state = NewState();
             AnimationDecision decision = state.Tick(T0.AddSeconds(1), 0.001f, true, false);
+
+            Assert.True(decision.MouthOpen);
+        }
+
+        [Fact]
+        public void NoAudioClosesMouthRegardlessOfLastChunkLevel()
+        {
+            ConversationAnimationState state = NewState();
+            AnimationDecision decision = state.Tick(T0.AddSeconds(1), 0.09f, false, false);
 
             Assert.False(decision.MouthOpen);
         }
@@ -58,6 +67,48 @@ namespace AnotherDay.Tests
 
             AnimationDecision quiet = state.Tick(T0.AddSeconds(1.2), 0f, false, false);
             Assert.False(quiet.PlayerMouthOpen);
+        }
+
+        [Fact]
+        public void OnlyTheCurrentSpeakerMovesTheirMouthWhenActivityOverlaps()
+        {
+            ConversationAnimationState state = NewState();
+            AnimationDecision decision = state.Tick(T0.AddSeconds(1), 0.09f, true, true);
+
+            Assert.False(decision.MouthOpen);
+            Assert.True(decision.PlayerMouthOpen);
+            Assert.Equal(ConversationAnimationPhase.PlayerSpeaking, decision.Phase);
+        }
+
+        [Fact]
+        public void PlayerMouthIgnoresMicNoiseBelowConfiguredSpeechThreshold()
+        {
+            Assert.False(AnimationSettings.IsPlayerSpeech(0.008f, 0.02f));
+            Assert.True(AnimationSettings.IsPlayerSpeech(0.02f, 0.02f));
+        }
+
+        [Fact]
+        public void PlayerMouthThresholdHasANoiseResistantMinimum()
+        {
+            Assert.False(AnimationSettings.IsPlayerSpeech(0.004f, 0.002f));
+            Assert.True(AnimationSettings.IsPlayerSpeech(0.005f, 0.002f));
+        }
+
+        [Fact]
+        public void PlayerMouthClosesWithinShortReleaseWindow()
+        {
+            long lastSpeech = T0.Ticks;
+
+            Assert.True(AnimationSettings.IsPlayerMouthActive(T0.AddMilliseconds(40), lastSpeech, true));
+            Assert.False(AnimationSettings.IsPlayerMouthActive(T0.AddMilliseconds(60), lastSpeech, true));
+            Assert.False(AnimationSettings.IsPlayerMouthActive(T0.AddMilliseconds(20), lastSpeech, false));
+        }
+
+        [Fact]
+        public void NpcMouthIgnoresQuietPlaybackNoise()
+        {
+            Assert.False(AnimationSettings.IsNpcSpeech(0.008f));
+            Assert.True(AnimationSettings.IsNpcSpeech(AnimationSettings.DefaultMouthLevel));
         }
 
         [Fact]
@@ -172,6 +223,51 @@ namespace AnotherDay.Tests
         {
             Assert.Equal("gestures@m@standing@casual", new ConversationStyle { IsMale = true }.GestureDictionary);
             Assert.Equal("gestures@f@standing@casual", new ConversationStyle { IsMale = false }.GestureDictionary);
+        }
+    }
+
+    public sealed class PlaybackSpeechMonitorTests
+    {
+        [Fact]
+        public void SpeechIsActiveOnlyForTheCurrentRenderedAudioBlock()
+        {
+            var monitor = new PlaybackSpeechMonitor();
+            float[] voicedBlock = { 0.1f, -0.1f, 0.08f, -0.08f };
+            float[] silentBlock = { 0f, 0f, 0f, 0f };
+
+            monitor.Record(voicedBlock, 0, voicedBlock.Length);
+            Assert.True(monitor.IsSpeaking);
+
+            monitor.Record(silentBlock, 0, silentBlock.Length);
+            Assert.False(monitor.IsSpeaking);
+        }
+
+        [Fact]
+        public void MonitorUsesOnlyTheRequestedSampleRange()
+        {
+            var monitor = new PlaybackSpeechMonitor();
+            float[] samples = { 0.5f, 0f, 0f };
+
+            monitor.Record(samples, 1, 2);
+
+            Assert.False(monitor.IsSpeaking);
+        }
+
+        [Fact]
+        public void EmptyAndResetBlocksClearSpeechActivity()
+        {
+            var monitor = new PlaybackSpeechMonitor();
+            float[] voicedBlock = { 0.1f, -0.1f };
+
+            monitor.Record(voicedBlock, 0, voicedBlock.Length);
+            Assert.True(monitor.IsSpeaking);
+
+            monitor.Record(voicedBlock, 0, 0);
+            Assert.False(monitor.IsSpeaking);
+
+            monitor.Record(voicedBlock, 0, voicedBlock.Length);
+            monitor.Reset();
+            Assert.False(monitor.IsSpeaking);
         }
     }
 

@@ -40,7 +40,10 @@ namespace AnotherDay.Shared
 ,
         /// <summary>The player said goodbye out loud. The NPC gets a short
         /// farewell, then the conversation is released normally.</summary>
-        PlayerSaidGoodbye
+        PlayerSaidGoodbye,
+
+        /// <summary>The NPC chose to end the interaction with a spoken farewell.</summary>
+        NpcSaidGoodbye
     }
 
     /// <summary>What the plugin should do to the NPC right now to hold it.</summary>
@@ -51,10 +54,22 @@ namespace AnotherDay.Shared
         StayInVehicle
     }
 
+    /// <summary>
+    /// A conversation must not override a pedestrian's active flee, run, sprint,
+    /// or combat behavior. The caller can search for another nearby target.
+    /// </summary>
+    public static class ConversationTargetPolicy
+    {
+        public static bool CanStart(bool fleeing, bool running, bool sprinting, bool inCombat)
+        {
+            return !fleeing && !running && !sprinting && !inCombat;
+        }
+    }
+
     public sealed class EngagementSettings
     {
-        /// <summary>How often an on-foot NPC is turned back toward the player.</summary>
-        public double FaceIntervalSeconds { get; set; } = 1.5;
+        /// <summary>How often an on-foot NPC's attention is refreshed toward the player.</summary>
+        public double FaceIntervalSeconds { get; set; } = 0.75;
 
         /// <summary>How often a driver is asked to stay put at the wheel.</summary>
         public double HoldIntervalSeconds { get; set; } = 1.0;

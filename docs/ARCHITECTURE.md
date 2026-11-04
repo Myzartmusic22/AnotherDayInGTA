@@ -27,8 +27,8 @@
    the shared `EngagementState` (attention, vehicle context, timers, end reason).
    Ambient tasks are blocked only for that ped and only while the conversation
    lasts; `Release` hands the ped back to ordinary pedestrian or traffic AI.
-6. runs `ConversationAnimator` every frame: mouth movement from the RMS of the
-   PCM chunk that reached the speakers, gestures and facial expressions from the
+6. runs `ConversationAnimator` every frame: speaker-exclusive mouth movement
+   from live mic/output activity, gestures and facial expressions from the
    NPC's personality and mood, all gated by the ped's vehicle/combat/ragdoll
    state. Upper-body flags only, so walking and driving tasks are untouched.
 
@@ -80,9 +80,11 @@ fights, deaths, police escalation, aiming, zone and weather changes, each with a
 cooldown so the same event is not re-sent.
 
 Audio: `AudioPlayback` is a single sequential `WaveOut` queue (no overlapping
-NPCs) with distance attenuation; player push-to-talk stops the current line,
-which is the natural interruption path. `MicrophoneRecorder` captures 16 kHz
-mono WAV for the transcription provider.
+NPCs) with distance attenuation. The live microphone stays open during the
+conversation, is forwarded only during the player's turn, and pauses through
+NPC playback; pressing the talk key during a reply is the deliberate
+interruption path. `MicrophoneRecorder` captures 16 kHz mono WAV for the
+transcription provider.
 
 ## Protocol
 
